@@ -5,13 +5,31 @@ from dataclasses import dataclass
 import json
 import os
 import sys
-from typing import Any, Self
+from typing import Any, Iterable, Self, SupportsIndex
 from pathlib import Path
-from glassy.utils import Tape
-from sklearn.decomposition import dict_learning
-
 
 DEFUALT_PROJ_FILENAME = 'pygnu.json'
+_LOG_INDENT_LEVEL = 0
+_LOG_INDENT_LEVEL_S = ''
+
+def raise_log_indent():
+	_LOG_INDENT_LEVEL += 1
+	_LOG_INDENT_LEVEL_S = '\t' * _LOG_INDENT_LEVEL
+
+def drop_log_indent():
+	_LOG_INDENT_LEVEL -= 1
+	if _LOG_INDENT_LEVEL < 0:
+		_LOG_INDENT_LEVEL = 0
+	_LOG_INDENT_LEVEL_S = '\t' * _LOG_INDENT_LEVEL
+
+def log(	*values: object,
+  				sep: str | None = " ",
+  			  end: str | None = "\n" ):
+	
+	total = sep.join(map(str, values))
+	total = total.replace('\n', '\n' + _LOG_INDENT_LEVEL_S).replace('\r', '\r' + _LOG_INDENT_LEVEL_S)
+	print(_LOG_INDENT_LEVEL_S + total, end=end)
+	
 
 class OptimizationType(enum.IntEnum):
 	Debug = 0 # -g[x] -Og
@@ -99,6 +117,9 @@ class Optimization:
 	opt_type: OptimizationType = OptimizationType.Speed # -O / -g / -Oz
 	opt_level: OptimizationLevel = OptimizationLevel.Medium
 
+	def copy(self):
+		return Optimization(self.opt_type, self.opt_level)
+
 	@property
 	def commandlet(self):
 		if self.opt_level == OptimizationLevel.NoneOptimized:
@@ -106,7 +127,7 @@ class Optimization:
 
 		match (self.opt_type):
 			case OptimizationType.Debug:
-				return f"-Og -g{self.opt_level}"
+				return f"-Og -g{min(int(self.opt_level), 4)}"
 			case OptimizationType.Speed:
 				return f"-O{self.opt_level}"
 			case OptimizationType.Size:
@@ -139,6 +160,9 @@ class WarningsOptions:
 	level: WarningLevel # -W[level]
 	pedantic: bool # -Wpedantic
 
+	def copy(self):
+		return WarningsOptions(self.level, self.pedantic)
+
 	@property
 	def commandlet(self):
 		s = ' -Wpedantic' if self.pedantic else ''
@@ -157,6 +181,11 @@ class WarningsOptions:
 class LibrariesOptions:
 	directories: list[str] # -L[N1] -L[N2] .. -L[Nx]
 	names: list[str] # -l[N1] -l[N2] .. -l[Nx]
+
+	def copy(self):
+		return LibrariesOptions(
+			self.directories.copy(), self.names.copy()
+		)
 
 	@property
 	def commandlet(self):
@@ -182,14 +211,15 @@ class BuildConfiguration:
 	dynamicly_linkable: bool = True # --no-dynamic-linker
 	print_stats: bool = True # --print-memory-usage
 
-	include_dirs: list[str]
 	libraries: LibrariesOptions
 	striping: SymbolStrippingType = SymbolStrippingType.DontStrip
+	include_dirs: list[str]
 
 	assempler_args: list[str]
 	linker_args: list[str]
 	preprocessor_args: list[str]
 
+	# simple boolean properties
 	FLAG_PROPERTIES = \
 		'print_includes', 'catch_typos', \
 		'exit_on_errors', 'dynamicly_linkable', \
@@ -199,7 +229,9 @@ class BuildConfiguration:
 	SIMPLE_PROPERTIES = FLAG_PROPERTIES + ( 'striping', 'standard' )
 
 	# properties that can by copied by calling 'x.copy()'
-	COPYCALL_PROPERTIES = FLAG_PROPERTIES + ( 'striping', 'standard' )
+	COPYCALL_PROPERTIES = \
+		'predefines', 'include_dirs', 'assempler_args', 'linker_args', 'preprocessor_args', \
+		'optimization', 'warnings', 'libraries'
 
 	def __init__(self) -> None:
 		self.predefines = dict()
@@ -259,10 +291,11 @@ class BuildConfiguration:
 	def copy(self):
 		c = BuildConfiguration()
 
-		c.predefines = self.predefines.copy()
-		c.optimization = Optimization(self.optimization.opt_type, self.optimization.opt_level)
-		c.warnings = WarningsOptions(self.warnings.level, self.warnings.pedantic)
-		c.standard = self.standard
+		for i in BuildConfiguration.SIMPLE_PROPERTIES:
+			c.__setattr__(i, self.__getattribute__(i))
+
+		for i in BuildConfiguration.COPYCALL_PROPERTIES:
+			c.__setattr__(i, self.__getattribute__(i).copy())
 
 		return c
 
@@ -472,9 +505,13 @@ class Project:
 			if not isinstance(v, dict):
 				raise ValueError(f"'{i}' has an invalid build configuration value: \"{v}\"")
 			
-			print(f"parsing '{i}' build configuration:")
+			log(f"parsing '{i}' build configuration:")
+
+			raise_log_indent()
 			conf = BuildConfiguration.from_data(v)
-			print(f"successfuly parsed '{i}' build configuration")
+			drop_log_indent()
+
+			log(f"successfuly parsed '{i}' build configuration")
 			c.build_configs[i] = conf
 		
 		return c
@@ -498,7 +535,7 @@ class Project:
 	
 	def get_build_commands(self, config_name: str):
 		if not config_name in self.build_configs:
-			print(f"build config '{config_name}' doesn't exist!")
+			log(f"build config '{config_name}' doesn't exist!")
 			return []
 		
 		ls = []
@@ -547,7 +584,35 @@ class Project:
 		debug_build.warnings = WarningsOptions(WarningLevel.AllWarnings, False)
 		debug_build.predefines = dict(_DEBUG=None)
 
-		return Project( project_path, Path(), Path(), dict() )
+		release_build = debug_build.copy()
+		release_build.optimization = Optimization(OptimizationType.Speed, OptimizationLevel.Extreme)
+		release_build.predefines = dict(NDEBUG=None,_RELEASE=None)
+
+		return Project(
+			project_path, Path(), Path(),
+			dict(debug=debug_build, release=release_build) )
+
+	def build(self, confg: str):
+		if not confg in self.build_configs:
+			log(f"project: no config with name {confg}")
+			configs_str = []
+			for i in self.build_configs:
+				configs_str.append(i)
+			log( f"\tavailable configs are {', '.join(configs_str[:-1])}"
+						 f"{f" and '{configs_str[i]}'" if len(configs_str) > 1 else ''}" )
+		for i in self.get_build_commands(confg):
+			
+			if os.system(i):
+				log(f"failed to excute system(\"{i}\")")
+
+def find[T](it: Iterable[T], value: T) -> SupportsIndex:
+	try:
+		f = it.index(value)
+	except ValueError:
+		return -1
+	except Any:
+		raise
+	return f
 
 def main():
 
@@ -558,43 +623,74 @@ def main():
 
 		match s.lower():
 			case 'new':
+				overwrite = find(argv, '--overwrite')
+				if overwrite != -1:
+					argv.pop(overwrite)
+					overwrite = True
+				else:
+					overwrite = False
+
 				root_dir = argv.pop() if argv else os.getcwd()
 				root_dir = Path(root_dir).resolve()
 				if not root_dir.exists():
 					root_dir.mkdir(exist_ok=True, parents=True)
 
 				new_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
-				if new_file.exists():
-					print(f"Can not create a new pygnu project file at '{new_file}': file already exists")
-					break
-				
-				
 
+				if new_file.exists():
+					if overwrite:
+						log(f"overwriten file while creating a new pygnu project at '{new_file}'")
+					else:
+						log(f"Can't create a new pygnu project file at '{new_file}': file already exists")
+						break
+				defualt_prj: Project = Project.get_default_project(root_dir)
+				data = defualt_prj.to_data()
+				with open(new_file, 'w') as f:
+					json.dump(data, f, default=lambda x: str(x), indent=4)
+				log(f"created pygnu project file at '{new_file}'")
 			case 'build':
 				
+				mode = 'debug'
 
-	input('d')
-	c = BuildConfiguration()
-	d = Project("","","", dict(debug=c))
+				if True:
+					mode_index = -1
+					for i, v in enumerate(argv):
+						if v[:2] == '-M':
+							mode = v[2:]
+							mode_index = i
+					
+					if mode_index != -1:
+						argv.pop(mode_index)
 
-	with open("project1.json", 'w') as f:
-		json.dump(d.to_data(), f, default=lambda o: str(o), indent=4)
+				root_dir = argv.pop() if argv else os.getcwd()
+				root_dir = Path(root_dir).resolve()
+				if not root_dir.exists():
+					root_dir.mkdir(exist_ok=True, parents=True)
 
-	with open("project1.json", 'r') as f:
-		json_data = json.load(f)
+				new_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
 
-	d2 = Project.from_data(json_data, "")
+				if not new_file.exists():
+					log(f"couldn't fine the pygnu project file at {new_file}")
+					break
 
-	with open("project2.json", 'w') as f:
-		json.dump(d2.to_data(), f, default=lambda o: str(o), indent=4)
-	
-	print(tuple(d2.gather_source_files()))
-	# print(d2.get_build_commands('debug'))
+				log(f"building '{mode}' mode of pygnu project at {new_file}")
 
-	for i in d2.get_build_commands('debug'):
+				with open(new_file, 'r') as f:
+					data = json.load(f)
+				
+				log("loaded data for json-formated pygnu project from file")
+				log("deserializing pygnu project data")
+				project: Project = Project.from_data(data, root_dir)
+				log("done deserializing pygnu project")
+
+				log(f"building '{mode}'")
+				project.build(mode)
+				log("---- done ----")
+
+	# for i in d2.get_build_commands('debug'):
 		
-		if os.system(i):
-			print(f"failed to excute system(\"{i}\")")
+	# 	if os.system(i):
+	# 		print(f"failed to excute system(\"{i}\")")
 
 if __name__ == "__main__":
 	main()
