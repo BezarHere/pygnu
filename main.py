@@ -652,6 +652,8 @@ class Project:
 			dict(debug=debug_build, release=release_build) )
 
 	def build(self, confg: str):
+		"""returns weather the build succesful"""
+
 		if not confg in self.build_configs:
 			log(f"project: no config with name '{confg}'", fg=LogFGColors.BrightYellow)
 			configs_str = []
@@ -661,8 +663,19 @@ class Project:
 			last_name = f" and '{configs_str[-1]}'" if len(configs_str) > 1 else ''
 			other_names = ', '.join(map(lambda s: f"'{s}'", configs_str[:-1]))
 			log( f"available configs are {other_names}" + last_name, fg=LogFGColors.BrightBlue )
-			return
+			return False
 		
+		if not self.project_dir.exists():
+			log_err(f"invalid project directory: no directory found at '{self.project_dir}'")
+			return False
+		
+		if not self.output_dir.exists():
+			log(f"created output directory at '{self.output_dir}'", fg=LogFGColors.Green)
+			self.output_dir.mkdir(exist_ok=True, parents=True)
+		
+		if not self.output_cache_dir.exists():
+			log(f"created output cache directory at '{self.output_cache_dir}'", fg=LogFGColors.Green)
+			self.output_cache_dir.mkdir(exist_ok=True, parents=True)
 
 		for cmd, file in self.get_build_commands(confg):
 			file = Path(file).resolve()
@@ -671,6 +684,7 @@ class Project:
 				log(f"failed to execute system cmd: \"{cmd}\"", fg=LogFGColors.BrightRed)
 			else:
 				log(f"compiled '{file.relative_to(self.project_dir)}'", fg=LogFGColors.BrightBlack)
+		return True
 
 def find(it: Iterable, value) -> SupportsIndex:
 	try:
@@ -777,7 +791,8 @@ def main():
 				log(f"building '{mode}'", fg=LogFGColors.BrightBlack)
 				
 				raise_log_indent()
-				project.build(mode)
+				if not project.build(mode):
+					log("building failed!", fg=LogFGColors.Red)
 				drop_log_indent()
 
 				end_time = (time_ns() - start_time) / 1_000_000
