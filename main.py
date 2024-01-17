@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha1
 import json
 import os
+import shutil
 import sys
 from time import time_ns
 from typing import Any, Iterable, Self, SupportsIndex
@@ -447,7 +448,7 @@ class BuildConfiguration:
 		# libraries
 
 		c.libraries.directories = data.get("lib_dirs", c.libraries.directories)
-		if not isinstance(c.libraries.directories, dict):
+		if not isinstance(c.libraries.directories, list | tuple):
 			raise ValueError(f"invalid library directories value: \"{c.libraries.directories}\"")	
 
 		c.libraries.directories = list(c.libraries.directories)
@@ -549,25 +550,38 @@ class Project:
 			data.get("output_name"),
 			dict(),
 			)
+		needs_resaving = False
 		
 		if not isinstance(c.project_dir, str | Path):
 			log_err(f"invalid project directory value: \"{c.project_dir}\"")
+
 			c.project_dir = os.getcwd()
+			needs_resaving = True
+
 			log(f"resseting project directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_dir, str | Path):
 			log_err(f"invalid output directory value: \"{c.output_dir}\"")
+
 			c.output_dir = 'output'
+			needs_resaving = True
+
 			log(f"resseting output directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_cache_dir, str | Path):
 			log_err(f"invalid output cache directory value: \"{c.output_cache_dir}\"")
+
 			c.output_cache_dir = c.output_dir + '/cache'
+			needs_resaving = True
+
 			log(f"resseting output cache directory value to \"{c.output_cache_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_name, str | Path):
 			log_err(f"invalid output name value: \"{c.output_name}\"")
+
 			c.output_name = 'output'
+			needs_resaving = True
+
 			log(f"resseting output name value to \"{c.output_name}\"", fg=LogFGColors.Green)
 
 
@@ -610,15 +624,17 @@ class Project:
 			log(f"successfuly parsed '{i}' build configuration", fg=LogFGColors.BrightBlack)
 			c.build_configs[i] = conf
 		
-		return c
+		return c, needs_resaving
 	
 	def to_data(self):
 		data = {}
 
 		data["output_dir"] = str(self.output_dir)
 		data["output_cache_dir"] = str(self.output_dir)
+		data["output_name"] = str(self.output_name)
 
 		data["source_selectors"] = self.source_selector._states
+
 		
 		data["build_configurations"] = {}
 		for i, v in self.build_configs.items():
@@ -816,10 +832,18 @@ def main():
 				log("deserializing pygnu project data", fg=LogFGColors.BrightBlack)
 
 				raise_log_indent()
-				project: Project = Project.from_data(data, root_dir)
+				project, project_needs_resaving = Project.from_data(data, root_dir)
 				drop_log_indent()
 
 				log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
+
+				if project_needs_resaving:
+					log("resaving project to apply fixes", fg=LogFGColors.Yellow)
+					shutil.copy(proj_file, str(proj_file) + ".last")
+					with open(proj_file, 'w') as f:
+						json.dump(project.to_data(), f, indent=4, default=str)
+
+				# log("checking paramters")
 
 				for i in project.build_configs:
 					index = find(argv, i)
