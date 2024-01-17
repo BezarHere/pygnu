@@ -629,8 +629,8 @@ class Project:
 	def to_data(self):
 		data = {}
 
-		data["output_dir"] = str(self.output_dir)
-		data["output_cache_dir"] = str(self.output_dir)
+		data["output_dir"] = str(self.output_dir.relative_to(self.project_dir))
+		data["output_cache_dir"] = str(self.output_cache_dir.relative_to(self.project_dir))
 		data["output_name"] = str(self.output_name)
 
 		data["source_selectors"] = self.source_selector._states
