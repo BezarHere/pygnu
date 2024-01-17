@@ -3,12 +3,14 @@ from functools import cache
 import glob
 
 from dataclasses import dataclass
+from hashlib import sha1
 import json
 import os
 import sys
 from time import time_ns
 from typing import Any, Iterable, Self, SupportsIndex
 from pathlib import Path
+import traceback
 
 DEFUALT_PROJ_FILENAME = 'pygnu.json'
 _LOG_INDENT_LEVEL = 0
@@ -36,9 +38,6 @@ def raise_log_indent():
 def drop_log_indent():
 	global _LOG_INDENT_LEVEL, _LOG_INDENT_LEVEL_S
 
-	if _LOG_INDENT_LEVEL:
-		print(_LOG_INDENT_LEVEL_S)
-
 	_LOG_INDENT_LEVEL -= 1
 	if _LOG_INDENT_LEVEL < 0:
 		_LOG_INDENT_LEVEL = 0
@@ -56,7 +55,22 @@ def log(	*values: object,
 		total = f"\033[{fg}m{total}\033[0m"
 
 	print(_LOG_INDENT_LEVEL_S + total, end=end)
-	
+
+def log_err( *values: object ):
+	log(*values, fg=LogFGColors.BrightRed)
+	stack = traceback.extract_stack()[:-1][::-1]
+	raise_log_indent()
+
+	for i in stack:
+		log(f"at '{i.name}', line {i.lineno}", fg=LogFGColors.BrightBlack)
+
+	print(_LOG_INDENT_LEVEL_S)
+
+	drop_log_indent()
+
+@cache
+def hash_src(src: str):
+	return int.from_bytes(sha1(src.encode(), usedforsecurity=False).digest(), 'big', signed=False)
 
 class OptimizationType(enum.IntEnum):
 	Debug = 0 # -g[x] -Og
@@ -466,10 +480,12 @@ class BuildConfiguration:
 class Project:
 	GCC_ARG = 'gcc'
 	GPP_ARG = 'g++'
+	BUILD_HASH_FILENAME = 'build.hash'
 
 	project_dir: Path
 	output_dir: Path
 	output_cache_dir: Path
+	output_name: str
 	build_configs: dict[str, BuildConfiguration]
 	source_selector: GlobSelector = GlobSelector(( "**/*.c",
 																										 "**/*.cpp",
@@ -489,17 +505,29 @@ class Project:
 			project_dir,
 			data.get("output_dir"),
 			data.get("output_cache_dir"),
+			data.get("output_name"),
 			dict(),
 			)
 		
 		if not isinstance(c.project_dir, str | Path):
-			raise ValueError(f"invalid project directory value: \"{c.project_dir}\"")
+			log_err(f"invalid project directory value: \"{c.project_dir}\"")
+			c.project_dir = os.getcwd()
+			log(f"resseting project directory value to \"{c.project_dir}\"")
 		
 		if not isinstance(c.output_dir, str | Path):
-			raise ValueError(f"invalid output directory value: \"{c.output_dir}\"")
+			log_err(f"invalid output directory value: \"{c.output_dir}\"")
+			c.output_dir = 'output'
+			log(f"resseting output directory value to \"{c.project_dir}\"")
 		
 		if not isinstance(c.output_cache_dir, str | Path):
-			raise ValueError(f"invalid output cache directory value: \"{c.output_cache_dir}\"")
+			log_err(f"invalid output cache directory value: \"{c.output_cache_dir}\"")
+			c.output_cache_dir = c.output_dir + '/cache'
+			log(f"resseting output cache directory value to \"{c.output_cache_dir}\"")
+		
+		if not isinstance(c.output_name, str | Path):
+			log_err(f"invalid output name value: \"{c.output_name}\"")
+			c.output_name = 'output'
+			log(f"resseting output name value to \"{c.output_name}\"")
 
 
 		c.project_dir = Path(c.project_dir).absolute()
@@ -559,7 +587,7 @@ class Project:
 
 	def gather_source_files(self):
 		return self.source_selector(self.project_dir)
-	
+
 	def get_build_commands(self, config_name: str):
 		if not config_name in self.build_configs:
 			log(f"build config '{config_name}' doesn't exist!")
@@ -597,9 +625,9 @@ class Project:
 		
 		output_file = ''
 		if os.name == 'nt':
-			output_file = self.output_dir.joinpath("output.exe")
+			output_file = self.output_dir.joinpath(f"{self.output_name}.exe")
 		else:
-			output_file = self.output_dir.joinpath("output.out")
+			output_file = self.output_dir.joinpath(f"{self.output_name}.out")
 
 		final.append(f'"{output_file}"')
 
@@ -620,7 +648,7 @@ class Project:
 		release_build.predefines = dict(NDEBUG=None,_RELEASE=None)
 
 		return Project(
-			project_path, Path(), Path(),
+			project_path, Path(), Path(), 'output',
 			dict(debug=debug_build, release=release_build) )
 
 	def build(self, confg: str):
