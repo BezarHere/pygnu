@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import os
 import sys
+from time import time_ns
 from typing import Any, Iterable, Self, SupportsIndex
 from pathlib import Path
 
@@ -12,11 +13,27 @@ DEFUALT_PROJ_FILENAME = 'pygnu.json'
 _LOG_INDENT_LEVEL = 0
 _LOG_INDENT_LEVEL_S = ''
 
+class LogFGColors(enum.IntEnum):
+	Black = 30
+	Red = 31
+	Green = 32
+	Yellow = 33
+	Blue = 34
+	White = 37
+	BrightBlack = 90
+	BrightRed = 91
+	BrightGreen = 92
+	BrightYellow = 93
+	BrightBlue = 94
+	BrightWhite = 97
+
 def raise_log_indent():
+	global _LOG_INDENT_LEVEL, _LOG_INDENT_LEVEL_S
 	_LOG_INDENT_LEVEL += 1
 	_LOG_INDENT_LEVEL_S = '\t' * _LOG_INDENT_LEVEL
 
 def drop_log_indent():
+	global _LOG_INDENT_LEVEL, _LOG_INDENT_LEVEL_S
 	_LOG_INDENT_LEVEL -= 1
 	if _LOG_INDENT_LEVEL < 0:
 		_LOG_INDENT_LEVEL = 0
@@ -24,10 +41,15 @@ def drop_log_indent():
 
 def log(	*values: object,
   				sep: str | None = " ",
-  			  end: str | None = "\n" ):
+  			  end: str | None = "\n",
+					fg: LogFGColors | None = None ):
 	
 	total = sep.join(map(str, values))
 	total = total.replace('\n', '\n' + _LOG_INDENT_LEVEL_S).replace('\r', '\r' + _LOG_INDENT_LEVEL_S)
+
+	if fg is not None:
+		total = f"\033[{fg}m{total}\033[0m"
+
 	print(_LOG_INDENT_LEVEL_S + total, end=end)
 	
 
@@ -505,13 +527,13 @@ class Project:
 			if not isinstance(v, dict):
 				raise ValueError(f"'{i}' has an invalid build configuration value: \"{v}\"")
 			
-			log(f"parsing '{i}' build configuration:")
+			log(f"parsing '{i}' build configuration", fg=LogFGColors.BrightBlack)
 
 			raise_log_indent()
 			conf = BuildConfiguration.from_data(v)
 			drop_log_indent()
 
-			log(f"successfuly parsed '{i}' build configuration")
+			log(f"successfuly parsed '{i}' build configuration", fg=LogFGColors.BrightBlack)
 			c.build_configs[i] = conf
 		
 		return c
@@ -556,7 +578,7 @@ class Project:
 			obj_filepath = self.output_cache_dir.joinpath(basename + '.o')
 			object_files.append(obj_filepath)
 			cs.append(f'"{obj_filepath}"')
-			ls.append(' '.join(cs))
+			ls.append((' '.join(cs), i))
 		
 		final = []
 
@@ -568,12 +590,15 @@ class Project:
 
 		final.append('-o')
 		
+		output_file = ''
 		if os.name == 'nt':
-			final.append(f'"{self.project_dir.joinpath("output.exe")}"')
+			output_file = self.project_dir.joinpath("output.exe")
 		else:
-			final.append(f'"{self.project_dir.joinpath("output.out")}"')
+			output_file = self.project_dir.joinpath("output.out")
 
-		ls.append(' '.join(final))
+		final.append(f'"{output_file}"')
+
+		ls.append((' '.join(final), output_file))
 
 		return ls
 
@@ -594,16 +619,24 @@ class Project:
 
 	def build(self, confg: str):
 		if not confg in self.build_configs:
-			log(f"project: no config with name {confg}")
+			log(f"project: no config with name '{confg}'", fg=LogFGColors.BrightYellow)
 			configs_str = []
 			for i in self.build_configs:
 				configs_str.append(i)
-			log( f"\tavailable configs are {', '.join(configs_str[:-1])}"
-						 f"{f" and '{configs_str[i]}'" if len(configs_str) > 1 else ''}" )
-		for i in self.get_build_commands(confg):
 			
-			if os.system(i):
-				log(f"failed to excute system(\"{i}\")")
+			log( f"available configs are {', '.join(map(lambda s: f"'{s}'", configs_str[:-1]))}"
+					 f"{f" and '{configs_str[-1]}'" if len(configs_str) > 1 else ''}",
+					 fg=LogFGColors.BrightBlue )
+			return
+		
+
+		for cmd, file in self.get_build_commands(confg):
+			file = Path(file).resolve()
+			
+			if os.system(cmd):
+				log(f"failed to execute system cmd: \"{cmd}\"", fg=LogFGColors.BrightRed)
+			else:
+				log(f"compiled '{file.relative_to(self.project_dir)}'", fg=LogFGColors.BrightBlack)
 
 def find[T](it: Iterable[T], value: T) -> SupportsIndex:
 	try:
@@ -639,17 +672,19 @@ def main():
 
 				if new_file.exists():
 					if overwrite:
-						log(f"overwriten file while creating a new pygnu project at '{new_file}'")
+						log(f"overwriten file while creating a new pygnu project at '{new_file}'",
+								fg=LogFGColors.BrightBlack)
 					else:
-						log(f"Can't create a new pygnu project file at '{new_file}': file already exists")
+						log(f"Can't create a new pygnu project file at '{new_file}': file already exists",
+								fg=LogFGColors.BrightRed)
 						break
 				defualt_prj: Project = Project.get_default_project(root_dir)
 				data = defualt_prj.to_data()
 				with open(new_file, 'w') as f:
 					json.dump(data, f, default=lambda x: str(x), indent=4)
-				log(f"created pygnu project file at '{new_file}'")
+				log(f"created pygnu project file at '{new_file}'", fg=LogFGColors.BrightBlack)
 			case 'build':
-				
+				start_time = time_ns()
 				mode = 'debug'
 
 				if True:
@@ -670,22 +705,31 @@ def main():
 				new_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
 
 				if not new_file.exists():
-					log(f"couldn't fine the pygnu project file at {new_file}")
+					log(f"couldn't fine the pygnu project file at {new_file}", fg=LogFGColors.Red)
 					break
 
-				log(f"building '{mode}' mode of pygnu project at {new_file}")
+				log(f"building '{mode}' mode of pygnu project at '{new_file}'")
 
 				with open(new_file, 'r') as f:
 					data = json.load(f)
 				
-				log("loaded data for json-formated pygnu project from file")
-				log("deserializing pygnu project data")
-				project: Project = Project.from_data(data, root_dir)
-				log("done deserializing pygnu project")
+				log("loaded data for json-formated pygnu project from file", fg=LogFGColors.BrightBlack)
+				log("deserializing pygnu project data", fg=LogFGColors.BrightBlack)
 
-				log(f"building '{mode}'")
+				raise_log_indent()
+				project: Project = Project.from_data(data, root_dir)
+				drop_log_indent()
+
+				log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
+
+				log(f"building '{mode}'", fg=LogFGColors.BrightBlack)
+				
+				raise_log_indent()
 				project.build(mode)
-				log("---- done ----")
+				drop_log_indent()
+
+				end_time = (time_ns() - start_time) / 1_000_000
+				log(f"---- done in {end_time}ms ----", fg=LogFGColors.BrightGreen)
 
 	# for i in d2.get_build_commands('debug'):
 		
