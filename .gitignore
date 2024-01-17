@@ -4,3 +4,11 @@ output.exe
 project.json
 project1.json
 project2.json
+
+dist/**
+build/**
+
+**/*.o
+**/*.exe
+
+compile.bat
