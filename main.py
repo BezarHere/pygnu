@@ -19,6 +19,7 @@ import traceback
 DEFUALT_PROJ_FILENAME = 'pygnu.json'
 _LOG_INDENT_LEVEL = 0
 _LOG_INDENT_LEVEL_S = ''
+_LOG_DIRTY_LAST_PRINT = True
 
 class LogFGColors(enum.IntEnum):
 	Black = 30
@@ -51,15 +52,20 @@ def log(	*values: object,
   				sep: str | None = " ",
   			  end: str | None = "\n",
 					fg: LogFGColors | None = None ):
-	
+	global _LOG_DIRTY_LAST_PRINT
+
 	total = sep.join(map(str, values))
 	total = total.replace('\n', '\n' + _LOG_INDENT_LEVEL_S).replace('\r', '\r' + _LOG_INDENT_LEVEL_S)
 
 	if fg is not None:
 		total = f"\033[{fg}m{total}\033[0m"
 
-	print( total,
-			 end=end.replace('\n', '\n' + _LOG_INDENT_LEVEL_S).replace('\r', '\r' + _LOG_INDENT_LEVEL_S))
+	if _LOG_DIRTY_LAST_PRINT:
+		print( _LOG_INDENT_LEVEL_S + total, end=end)
+	else:
+		print( total, end=end)
+	
+	_LOG_DIRTY_LAST_PRINT = '\n' in end or '\r' in end
 
 def log_err( *values: object ):
 	log(*values, fg=LogFGColors.BrightRed)
@@ -385,6 +391,10 @@ class BuildConfiguration:
 	striping: SymbolStrippingType = SymbolStrippingType.DontStrip
 	include_dirs: list[str]
 
+	# TODO implement
+	# excluded_files: set[FILENAME/GLOB SELECTOR]
+	# output_type: dict[FILENAME, OUTPUT_TYPE]
+
 	assempler_args: list[str]
 	linker_args: list[str]
 	preprocessor_args: list[str]
@@ -448,6 +458,9 @@ class BuildConfiguration:
 		# if self.print_stats:
 		# 	cl.append('--print-memory-usage')
 		
+		if self.simd_type > SIMDType.NoSIMD:
+			cl.append(f'-m{self.simd_type.cmd_name}')
+
 		for i in self.include_dirs:
 			cl.append('-I')
 			cl.append(i)
@@ -548,10 +561,11 @@ class BuildConfiguration:
 		
 		# simd
 
-		simd_type = SIMDType.parse(data.get('simd_type'))
+		simd_raw_value = data.get('simd_type')
+		simd_type = SIMDType.parse(simd_raw_value)
 
 		if simd_type == SIMDType.Invalid:
-			log_err(f"invalid simd type value: \"{simd_type}\"")
+			log_err(f"invalid simd type value: \"{simd_raw_value}\"")
 			simd_type = None
 
 		if simd_type is None:
