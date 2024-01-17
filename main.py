@@ -1,4 +1,5 @@
 import enum
+from functools import cache
 import glob
 
 from dataclasses import dataclass
@@ -34,6 +35,10 @@ def raise_log_indent():
 
 def drop_log_indent():
 	global _LOG_INDENT_LEVEL, _LOG_INDENT_LEVEL_S
+
+	if _LOG_INDENT_LEVEL:
+		print(_LOG_INDENT_LEVEL_S)
+
 	_LOG_INDENT_LEVEL -= 1
 	if _LOG_INDENT_LEVEL < 0:
 		_LOG_INDENT_LEVEL = 0
@@ -592,9 +597,9 @@ class Project:
 		
 		output_file = ''
 		if os.name == 'nt':
-			output_file = self.project_dir.joinpath("output.exe")
+			output_file = self.output_dir.joinpath("output.exe")
 		else:
-			output_file = self.project_dir.joinpath("output.out")
+			output_file = self.output_dir.joinpath("output.out")
 
 		final.append(f'"{output_file}"')
 
@@ -603,6 +608,7 @@ class Project:
 		return ls
 
 	@staticmethod
+	@cache
 	def get_default_project(project_path: Path):
 		debug_build = BuildConfiguration()
 		debug_build.optimization = Optimization(OptimizationType.Debug)
@@ -624,9 +630,9 @@ class Project:
 			for i in self.build_configs:
 				configs_str.append(i)
 			
-			log( f"available configs are {', '.join(map(lambda s: f"'{s}'", configs_str[:-1]))}"
-					 f"{f" and '{configs_str[-1]}'" if len(configs_str) > 1 else ''}",
-					 fg=LogFGColors.BrightBlue )
+			last_name = f" and '{configs_str[-1]}'" if len(configs_str) > 1 else ''
+			other_names = ', '.join(map(lambda s: f"'{s}'", configs_str[:-1]))
+			log( f"available configs are {other_names}" + last_name, fg=LogFGColors.BrightBlue )
 			return
 		
 
@@ -638,7 +644,7 @@ class Project:
 			else:
 				log(f"compiled '{file.relative_to(self.project_dir)}'", fg=LogFGColors.BrightBlack)
 
-def find[T](it: Iterable[T], value: T) -> SupportsIndex:
+def find(it: Iterable, value) -> SupportsIndex:
 	try:
 		f = it.index(value)
 	except ValueError:
@@ -668,21 +674,21 @@ def main():
 				if not root_dir.exists():
 					root_dir.mkdir(exist_ok=True, parents=True)
 
-				new_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
+				proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
 
-				if new_file.exists():
+				if proj_file.exists():
 					if overwrite:
-						log(f"overwriten file while creating a new pygnu project at '{new_file}'",
-								fg=LogFGColors.BrightBlack)
+						log(f"overwriten file while creating a new pygnu project at '{proj_file}'",
+								fg=LogFGColors.Yellow)
 					else:
-						log(f"Can't create a new pygnu project file at '{new_file}': file already exists",
+						log(f"Can't create a new pygnu project file at '{proj_file}': file already exists",
 								fg=LogFGColors.BrightRed)
 						break
 				defualt_prj: Project = Project.get_default_project(root_dir)
 				data = defualt_prj.to_data()
-				with open(new_file, 'w') as f:
+				with open(proj_file, 'w') as f:
 					json.dump(data, f, default=lambda x: str(x), indent=4)
-				log(f"created pygnu project file at '{new_file}'", fg=LogFGColors.BrightBlack)
+				log(f"created pygnu project file at '{proj_file}'", fg=LogFGColors.BrightGreen)
 			case 'build':
 				start_time = time_ns()
 				mode = 'debug'
@@ -698,19 +704,29 @@ def main():
 						argv.pop(mode_index)
 
 				root_dir = argv.pop() if argv else os.getcwd()
-				root_dir = Path(root_dir).resolve()
-				if not root_dir.exists():
-					root_dir.mkdir(exist_ok=True, parents=True)
 
-				new_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
-
-				if not new_file.exists():
-					log(f"couldn't fine the pygnu project file at {new_file}", fg=LogFGColors.Red)
+				if (root_dir[0].lower() + root_dir[1:]) in ('debug', 'release', 'prod', 'production', 'export'):
+					msg = \
+							f"by passing the argument '{root_dir}', " + \
+							f"did you intend to build in '{root_dir}' mode? if you did, then pass '-M{root_dir}'"
+					log( msg, fg=LogFGColors.Blue )
 					break
 
-				log(f"building '{mode}' mode of pygnu project at '{new_file}'")
+				root_dir = Path(root_dir).resolve()
+				proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
 
-				with open(new_file, 'r') as f:
+				if not root_dir.exists():
+					log(f"there is no pygnu project file at {proj_file}", fg=LogFGColors.Red)
+					break
+
+
+				if not proj_file.exists():
+					log(f"couldn't find the pygnu project file at {proj_file}", fg=LogFGColors.Red)
+					break
+
+				log(f"building '{mode}' mode of pygnu project at '{proj_file}'")
+
+				with open(proj_file, 'r') as f:
 					data = json.load(f)
 				
 				log("loaded data for json-formated pygnu project from file", fg=LogFGColors.BrightBlack)
@@ -721,6 +737,14 @@ def main():
 				drop_log_indent()
 
 				log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
+
+				for i in project.build_configs:
+					index = find(argv, i)
+					if index != -1:
+						msg = \
+							f"by passing the argument '{i}', " + \
+							f"did you intend to build in '{i}' mode? if you did, then pass '-M{i}'"
+						log( msg, fg=LogFGColors.Blue )
 
 				log(f"building '{mode}'", fg=LogFGColors.BrightBlack)
 				
