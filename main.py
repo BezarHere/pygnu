@@ -823,7 +823,7 @@ def main():
 					log(f"couldn't find the pygnu project file at {proj_file}", fg=LogFGColors.Red)
 					break
 
-				log(f"building '{mode}' mode of pygnu project at '{proj_file}'")
+				log(f"building '{mode}' mode of pygnu project at '{proj_file}'", fg=LogFGColors.BrightBlue)
 
 				with open(proj_file, 'r') as f:
 					data = json.load(f)
