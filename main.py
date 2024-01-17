@@ -1,3 +1,5 @@
+import abc
+from ast import Call
 import enum
 from functools import cache
 import glob
@@ -9,7 +11,8 @@ import os
 import shutil
 import sys
 from time import time_ns
-from typing import Any, Iterable, Self, SupportsIndex
+from turtle import color
+from typing import Any, Callable, Iterable, Self, SupportsIndex, override
 from pathlib import Path
 import traceback
 
@@ -55,7 +58,8 @@ def log(	*values: object,
 	if fg is not None:
 		total = f"\033[{fg}m{total}\033[0m"
 
-	print(_LOG_INDENT_LEVEL_S + total, end=end)
+	print( total,
+			 end=end.replace('\n', '\n' + _LOG_INDENT_LEVEL_S).replace('\r', '\r' + _LOG_INDENT_LEVEL_S))
 
 def log_err( *values: object ):
 	log(*values, fg=LogFGColors.BrightRed)
@@ -73,6 +77,32 @@ def log_err( *values: object ):
 def hash_src(src: str):
 	return int.from_bytes(sha1(src.encode(), usedforsecurity=False).digest(), 'big', signed=False)
 
+def read_data(obj: object, data: dict[str],
+							property_name: str, key_name: str,
+							property_validator: type | Callable[[Any], bool] | None = None,
+							error: Callable[[Any], None] = None ):
+	if property_validator is None:
+		property_validator = type(obj.__getattribute__(property_name))
+	if isinstance(property_validator, type):
+		property_type = property_validator
+		property_validator = lambda p: isinstance(p, property_type)
+	
+	if error is None:
+		def _err(found_data):
+			log_err("invalid data value")
+
+
+class NamedIntEnum(enum.IntEnum):
+
+	@staticmethod
+	@abc.abstractmethod
+	def name(value: int) -> str: ...
+
+	@staticmethod
+	@abc.abstractmethod
+	def parse(name: str) -> int: ...
+
+
 class OptimizationType(enum.IntEnum):
 	Debug = 0 # -g[x] -Og
 	Speed = 1 # -O[x]
@@ -88,7 +118,7 @@ class OptimizationLevel(enum.IntEnum):
 	High = 3
 	Extreme = 4
 
-class CppStandard(enum.IntEnum):
+class CppStandard(NamedIntEnum):
 	C98 = 0
 	C11 = 1
 	C14 = 2
@@ -105,8 +135,9 @@ class CppStandard(enum.IntEnum):
 
 	C77 = 0xffff
 
+	@override
 	@staticmethod
-	def from_name(name: str):
+	def parse(name: str):
 		match name:
 			case "c98":
 				return CppStandard.C98
@@ -135,6 +166,7 @@ class CppStandard(enum.IntEnum):
 			case _:
 				return CppStandard.C77
 
+	@override
 	@staticmethod
 	def name(value):
 		match value:
@@ -164,6 +196,68 @@ class CppStandard(enum.IntEnum):
 				return "c++2x"
 			case _:
 				return "c++17"
+
+class SIMDType(enum.IntEnum):
+	Invalid = -1
+	NoSIMD = 0
+	SSE = 1
+	SSE2 = 2
+	SSE3 = 3
+	SSE4 = 4
+	SSE4_1 = 5
+	SSE4_2 = 6
+	SSE5 = 7
+	AVX = 8
+	AVX2 = 10
+	
+	MAX = 11
+
+	@property
+	def cmd_name(self):
+		match self:
+			case SIMDType.Invalid:
+				return 'sse2'
+			case SIMDType.NoSIMD:
+				return ''
+			case SIMDType.SSE:
+				return 'sse'
+			case SIMDType.SSE2:
+				return 'sse2'
+			case SIMDType.SSE3:
+				return 'sse3'
+			case SIMDType.SSE4:
+				return 'sse4'
+			case SIMDType.SSE4_1:
+				return 'sse4.1'
+			case SIMDType.SSE4_2:
+				return 'sse4.2'
+			case SIMDType.SSE5:
+				return 'sse5'
+			case SIMDType.AVX:
+				return 'avx'
+			case SIMDType.AVX2:
+				return 'avx2'
+			
+			case _:
+				return 'INVALID'
+
+	@staticmethod
+	def parse(data):
+		if isinstance(data, int):
+			if data < 0 or data >= SIMDType.MAX:
+				return SIMDType.Invalid
+			return SIMDType(data)
+		elif isinstance(data, str):
+
+			lower = data.lower().replace('.', '_')
+			for i,v  in SIMDType._member_map_.items():
+				if i.lower() == lower:
+					return SIMDType(v)
+			
+		return SIMDType.Invalid
+
+class ArchitectureType(enum.IntEnum):
+	...
 
 class SymbolStrippingType(enum.IntEnum):
 	DontStrip = 0
@@ -279,6 +373,8 @@ class BuildConfiguration:
 	standard: CppStandard = CppStandard.C17 # -std=[X] 
 	warnings: WarningsOptions
 
+	simd_type: SIMDType
+
 	print_includes: bool = False # -H
 	catch_typos: bool = True # -gant
 	exit_on_errors: bool = False # -Wfatal-errors
@@ -312,6 +408,8 @@ class BuildConfiguration:
 		self.optimization = Optimization()
 		self.standard = CppStandard.C17
 		self.warnings = WarningsOptions(WarningLevel.NormalWarnings, False)
+
+		self.simd_type = SIMDType.SSE
 
 		self.print_includes = False
 		self.catch_typos = True
@@ -374,8 +472,10 @@ class BuildConfiguration:
 		return c
 
 	@classmethod
-	def from_data(cls, data: dict[str, Any]) -> Self:
+	def from_data(cls, data: dict[str, Any]):
 		c: Self = cls()
+		# if there is an invalid value that has been defaulted
+		reset_anything: bool = False 
 
 		# predefines
 
@@ -408,7 +508,7 @@ class BuildConfiguration:
 		if not isinstance(c.standard, int | CppStandard):
 			if isinstance(c.standard, str):
 				name = c.standard
-				c.standard = CppStandard.from_name(name.lower())
+				c.standard = CppStandard.parse(name.lower())
 
 				if c.standard == CppStandard.C77:
 					log_err(f"no standard version exists with the value: \"{name}\"")
@@ -445,6 +545,21 @@ class BuildConfiguration:
 
 			c.__setattr__(i, attr_type(c.__getattribute__(i)))
 		
+		
+		# simd
+
+		simd_type = SIMDType.parse(data.get('simd_type'))
+
+		if simd_type == SIMDType.Invalid:
+			log_err(f"invalid simd type value: \"{simd_type}\"")
+			simd_type = None
+
+		if simd_type is None:
+			log(f"default simd type value to \"{c.simd_type.name.lower()}\"", fg=LogFGColors.Green)
+			reset_anything = True
+		else:
+			c.simd_type = simd_type
+
 		# libraries
 
 		c.libraries.directories = data.get("lib_dirs", c.libraries.directories)
@@ -487,7 +602,7 @@ class BuildConfiguration:
 
 		c.preprocessor_args = list(c.preprocessor_args)
 
-		return c
+		return c, reset_anything
 
 	def to_data(self) -> dict[str]:
 		data = {}
@@ -506,6 +621,8 @@ class BuildConfiguration:
 							"exit_on_errors", "dynamicly_linkable",
 							"print_stats"):
 			data[i] = self.__getattribute__(i)
+		
+		data["simd_type"] = self.simd_type.cmd_name
 		
 		data["include_dirs"] = self.include_dirs.copy()
 		data["lib_dirs"] = self.libraries.directories.copy()
@@ -618,8 +735,11 @@ class Project:
 			log(f"parsing '{i}' build configuration", fg=LogFGColors.BrightBlack)
 
 			raise_log_indent()
-			conf = BuildConfiguration.from_data(v)
+			conf, reset_anything = BuildConfiguration.from_data(v)
 			drop_log_indent()
+
+			if reset_anything:
+				needs_resaving = True
 
 			log(f"successfuly parsed '{i}' build configuration", fg=LogFGColors.BrightBlack)
 			c.build_configs[i] = conf
@@ -708,7 +828,7 @@ class Project:
 			project_path, Path(), Path(), 'output',
 			dict(debug=debug_build, release=release_build) )
 
-	def build(self, confg: str):
+	def build(self, confg: str, verbose: bool = False):
 		"""returns weather the build succesful"""
 
 		if not confg in self.build_configs:
@@ -736,6 +856,13 @@ class Project:
 
 		for cmd, file in self.get_build_commands(confg):
 			file = Path(file).resolve()
+
+			if verbose:
+				log(f"VERBOSE: executing command: \"", end='', fg=LogFGColors.BrightBlack)
+				log(cmd, end='', fg=LogFGColors.BrightBlue)
+				log("\" on file \"", end='', fg=LogFGColors.BrightBlack)
+				log(file, end='', fg=LogFGColors.BrightBlue)
+				log('"')
 			
 			if os.system(cmd):
 				log(f"failed to execute system cmd: \"{cmd}\"", fg=LogFGColors.BrightRed)
@@ -802,6 +929,13 @@ def main():
 					if mode_index != -1:
 						argv.pop(mode_index)
 
+				verbose: SupportsIndex | bool = find(argv, '-v')
+				if verbose != -1:
+					argv.pop(verbose)
+					verbose = True
+				else:
+					verbose = False
+
 				root_dir = argv.pop() if argv else os.getcwd()
 
 				if (root_dir[0].lower() + root_dir[1:]) in ('debug', 'release', 'prod', 'production', 'export'):
@@ -856,7 +990,7 @@ def main():
 				log(f"building '{mode}'", fg=LogFGColors.BrightBlack)
 				
 				raise_log_indent()
-				if not project.build(mode):
+				if not project.build(mode, verbose):
 					log("building failed!", fg=LogFGColors.Red)
 				drop_log_indent()
 
