@@ -102,6 +102,38 @@ class CppStandard(enum.IntEnum):
 	Cpp20 = C20 + 0xff
 	Cpp2x = C2x + 0xff
 
+	C77 = 0xffff
+
+	@staticmethod
+	def from_name(name: str):
+		match name:
+			case "c98":
+				return CppStandard.C98
+			case "c11":
+				return CppStandard.C11
+			case "c14":
+				return CppStandard.C14
+			case "c17":
+				return CppStandard.C17
+			case "c20":
+				return CppStandard.C20
+			case "c2x":
+				return CppStandard.C2x
+			case "c++98":
+				return CppStandard.Cpp98
+			case "c++11":
+				return CppStandard.Cpp11
+			case "c++14":
+				return CppStandard.Cpp14
+			case "c++17":
+				return CppStandard.Cpp17
+			case "c++20":
+				return CppStandard.Cpp20
+			case "c++2x":
+				return CppStandard.Cpp2x
+			case _:
+				return CppStandard.C77
+
 	@staticmethod
 	def name(value):
 		match value:
@@ -373,7 +405,16 @@ class BuildConfiguration:
 
 		c.standard = data.get("standard", c.standard)
 		if not isinstance(c.standard, int | CppStandard):
-			raise ValueError(f"invalid standard version value: \"{c.standard}\"")	
+			if isinstance(c.standard, str):
+				name = c.standard
+				c.standard = CppStandard.from_name(name.lower())
+
+				if c.standard == CppStandard.C77:
+					log_err(f"no standard version exists with the value: \"{name}\"")
+					c.standard = CppStandard.C17
+					log(f"default standard version to C17", fg=LogFGColors.Green)
+			else:
+				raise ValueError(f"invalid standard version value: \"{c.standard}\"")	
 
 		c.standard = CppStandard(c.standard)
 
@@ -455,7 +496,7 @@ class BuildConfiguration:
 		data["optimization_lvl"] = int(self.optimization.opt_level)
 		data["optimization_type"] = int(self.optimization.opt_level)
 
-		data["standard"] = int(self.standard)
+		data["standard"] = CppStandard.name(self.standard)
 
 		data["warning_level"] = int(self.warnings.level)
 		data["warning_pedantic"] = self.warnings.pedantic
@@ -512,22 +553,22 @@ class Project:
 		if not isinstance(c.project_dir, str | Path):
 			log_err(f"invalid project directory value: \"{c.project_dir}\"")
 			c.project_dir = os.getcwd()
-			log(f"resseting project directory value to \"{c.project_dir}\"")
+			log(f"resseting project directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_dir, str | Path):
 			log_err(f"invalid output directory value: \"{c.output_dir}\"")
 			c.output_dir = 'output'
-			log(f"resseting output directory value to \"{c.project_dir}\"")
+			log(f"resseting output directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_cache_dir, str | Path):
 			log_err(f"invalid output cache directory value: \"{c.output_cache_dir}\"")
 			c.output_cache_dir = c.output_dir + '/cache'
-			log(f"resseting output cache directory value to \"{c.output_cache_dir}\"")
+			log(f"resseting output cache directory value to \"{c.output_cache_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_name, str | Path):
 			log_err(f"invalid output name value: \"{c.output_name}\"")
 			c.output_name = 'output'
-			log(f"resseting output name value to \"{c.output_name}\"")
+			log(f"resseting output name value to \"{c.output_name}\"", fg=LogFGColors.Green)
 
 
 		c.project_dir = Path(c.project_dir).absolute()
