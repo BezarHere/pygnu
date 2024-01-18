@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import sys
+from textwrap import wrap
 from time import time_ns
 from turtle import color
 from typing import Any, Callable, Iterable, Self, SupportsIndex, override
@@ -20,6 +21,7 @@ DEFUALT_PROJ_FILENAME = 'pygnu.json'
 _LOG_INDENT_LEVEL = 0
 _LOG_INDENT_LEVEL_S = ''
 _LOG_DIRTY_LAST_PRINT = True
+_LOG_USE_COLOR = True
 
 class LogFGColors(enum.IntEnum):
 	Black = 30
@@ -57,7 +59,7 @@ def log(	*values: object,
 	total = sep.join(map(str, values))
 	total = total.replace('\n', '\n' + _LOG_INDENT_LEVEL_S).replace('\r', '\r' + _LOG_INDENT_LEVEL_S)
 
-	if fg is not None:
+	if _LOG_USE_COLOR and fg is not None:
 		total = f"\033[{fg}m{total}\033[0m"
 
 	if _LOG_DIRTY_LAST_PRINT:
@@ -97,16 +99,15 @@ def read_data(obj: object, data: dict[str],
 		def _err(found_data):
 			log_err("invalid data value")
 
+@dataclass(slots=True, frozen=True)
+class CommandAction:
+	name: str
+	desc: str
+	help_desc: str = 'undocumented'
 
-class NamedIntEnum(enum.IntEnum):
-
-	@staticmethod
-	@abc.abstractmethod
-	def name(value: int) -> str: ...
-
-	@staticmethod
-	@abc.abstractmethod
-	def parse(name: str) -> int: ...
+	def __call__(self, func: Callable[[Iterable[str]], Any]) -> Callable:
+		func.command = self
+		return func
 
 
 class OptimizationType(enum.IntEnum):
@@ -124,7 +125,7 @@ class OptimizationLevel(enum.IntEnum):
 	High = 3
 	Extreme = 4
 
-class CppStandard(NamedIntEnum):
+class CppStandard(enum.IntEnum):
 	C98 = 0
 	C11 = 1
 	C14 = 2
@@ -141,7 +142,6 @@ class CppStandard(NamedIntEnum):
 
 	C77 = 0xffff
 
-	@override
 	@staticmethod
 	def parse(name: str):
 		match name:
@@ -172,7 +172,6 @@ class CppStandard(NamedIntEnum):
 			case _:
 				return CppStandard.C77
 
-	@override
 	@staticmethod
 	def name(value):
 		match value:
@@ -893,123 +892,219 @@ def find(it: Iterable, value) -> SupportsIndex:
 		raise
 	return f
 
+
+def commands_table():
+	def wraper(cls: type):
+
+		command_funcs = {}
+
+		for i, v in cls.__dict__.items():
+			# no internal states
+			if i.startswith('__') and i.endswith('__'):
+				continue
+			
+			# only static methods
+			if not isinstance(v, staticmethod):
+				continue
+			
+			if not isinstance(v.__getattribute__('command'), CommandAction):
+				continue
+
+			command_funcs[i] = v
+
+		cls.commands = {v.command.name: v for i, v in command_funcs.items()}
+		cls.func_mapped_commands = command_funcs
+
+		return cls
+	return wraper
+
+
+@commands_table()
+class Commands:
+	__new__ = None
+	_new_help_desc = ""
+	_build_help_desc = ""
+
+	#* CommandAction should always come before the staticmethod decorator
+
+	@CommandAction("new", "creates a new pygnu project", help_desc=_new_help_desc)
+	@staticmethod
+	def new(argv: list[str]):
+		overwrite = find(argv, '--overwrite')
+
+		if overwrite != -1:
+			argv.pop(overwrite)
+			overwrite = True
+		else:
+			overwrite = False
+
+		root_dir = argv.pop() if argv else os.getcwd()
+		root_dir = Path(root_dir).resolve()
+		if not root_dir.exists():
+			root_dir.mkdir(exist_ok=True, parents=True)
+
+		proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
+
+		if proj_file.exists():
+			if overwrite:
+				log(f"overwriten file while creating a new pygnu project at '{proj_file}'",
+						fg=LogFGColors.Yellow)
+			else:
+				log(f"Can't create a new pygnu project file at '{proj_file}': file already exists",
+						fg=LogFGColors.BrightRed)
+				return False
+		
+		defualt_prj: Project = Project.get_default_project(root_dir)
+		data = defualt_prj.to_data()
+
+		with open(proj_file, 'w') as f:
+			json.dump(data, f, default=lambda x: str(x), indent=4)
+		
+		log(f"created pygnu project file at '{proj_file}'", fg=LogFGColors.BrightGreen)
+		return True
+
+	@CommandAction(name='build', desc='build the pygnu project', help_desc=_build_help_desc)
+	@staticmethod
+	def build(argv: list[str]):
+		start_time = time_ns()
+		mode = 'debug'
+
+		if True:
+			mode_index = -1
+			for i, v in enumerate(argv):
+				if v[:2] == '-M':
+					mode = v[2:]
+					mode_index = i
+			
+			if mode_index != -1:
+				argv.pop(mode_index)
+
+		verbose: SupportsIndex | bool = find(argv, '-v')
+		if verbose != -1:
+			argv.pop(verbose)
+			verbose = True
+		else:
+			verbose = False
+
+		root_dir = argv.pop() if argv else os.getcwd()
+
+		if (root_dir[0].lower() + root_dir[1:]) in ('debug', 'release', 'prod', 'production', 'export'):
+			msg = \
+					f"by passing the argument '{root_dir}', " + \
+					f"did you intend to build in '{root_dir}' mode? if you did, then pass '-M{root_dir}'"
+			log( msg, fg=LogFGColors.Blue )
+			return False
+
+		root_dir = Path(root_dir).resolve()
+		proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
+
+		if not root_dir.exists():
+			log(f"there is no pygnu project file at {proj_file}", fg=LogFGColors.Red)
+			return False
+
+
+		if not proj_file.exists():
+			log(f"couldn't find the pygnu project file at {proj_file}", fg=LogFGColors.Red)
+			return False
+
+		log(f"building '{mode}' mode of pygnu project at '{proj_file}'", fg=LogFGColors.BrightBlue)
+
+		with open(proj_file, 'r') as f:
+			data = json.load(f)
+		
+		log("loaded data for json-formated pygnu project from file", fg=LogFGColors.BrightBlack)
+		log("deserializing pygnu project data", fg=LogFGColors.BrightBlack)
+
+		raise_log_indent()
+		project, project_needs_resaving = Project.from_data(data, root_dir)
+		drop_log_indent()
+
+		log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
+
+		if project_needs_resaving:
+			log("resaving project to apply fixes", fg=LogFGColors.Yellow)
+			shutil.copy(proj_file, str(proj_file) + ".last")
+			with open(proj_file, 'w') as f:
+				json.dump(project.to_data(), f, indent=4, default=str)
+
+		# log("checking paramters")
+
+		for v in project.build_configs:
+			index = find(argv, v)
+			if index != -1:
+				msg = \
+					f"by passing the argument '{v}', " + \
+					f"did you intend to build in '{v}' mode? if you did, then pass '-M{v}'"
+				log( msg, fg=LogFGColors.Blue )
+
+		log(f"building '{mode}'", fg=LogFGColors.BrightBlack)
+		
+		raise_log_indent()
+		if not project.build(mode, verbose):
+			log("building failed!", fg=LogFGColors.Red)
+		drop_log_indent()
+
+		end_time = (time_ns() - start_time) / 1_000_000
+		log(f"---- done in {end_time}ms ----", fg=LogFGColors.BrightGreen)
+		return True
+
+	@CommandAction(name='help', desc='shows help on given command or general help if non is given',
+								 help_desc='no help on help? :[')
+	@staticmethod
+	def help(argv: list[str]):
+		for i, v in Commands.commands.items():
+			ca: CommandAction = v.command
+
+			log(i, fg=LogFGColors.BrightBlue)
+			raise_log_indent()
+			log(ca.desc + '\n')
+			log(ca.help_desc, fg=LogFGColors.BrightBlack)
+			drop_log_indent()
+		return True
+
 def main():
 
-	argv = sys.argv.copy()[::-1]
+	argv = sys.argv.copy()[1:]
+	command: Callable | None = None
+	command_index = -1
 
-	while argv:
-		s = argv.pop()
+	for i, v in enumerate(argv):
+		if not v:
+			continue
 
-		match s.lower():
-			case 'new':
-				overwrite = find(argv, '--overwrite')
-				if overwrite != -1:
-					argv.pop(overwrite)
-					overwrite = True
-				else:
-					overwrite = False
+		if v[0] == '-' or v[0] == '/':
+			global _LOG_USE_COLOR
 
-				root_dir = argv.pop() if argv else os.getcwd()
-				root_dir = Path(root_dir).resolve()
-				if not root_dir.exists():
-					root_dir.mkdir(exist_ok=True, parents=True)
+			if v == '--no-color':
+				_LOG_USE_COLOR = False
+			elif v == '--color':
+				_LOG_USE_COLOR = True
+			
+			continue
 
-				proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
+		if v in Commands.commands:
 
-				if proj_file.exists():
-					if overwrite:
-						log(f"overwriten file while creating a new pygnu project at '{proj_file}'",
-								fg=LogFGColors.Yellow)
-					else:
-						log(f"Can't create a new pygnu project file at '{proj_file}': file already exists",
-								fg=LogFGColors.BrightRed)
-						break
-				defualt_prj: Project = Project.get_default_project(root_dir)
-				data = defualt_prj.to_data()
-				with open(proj_file, 'w') as f:
-					json.dump(data, f, default=lambda x: str(x), indent=4)
-				log(f"created pygnu project file at '{proj_file}'", fg=LogFGColors.BrightGreen)
-			case 'build':
-				start_time = time_ns()
-				mode = 'debug'
+			if command is not None:
+				log_err(f"found unexpected argument: \"{v}\"")
+				continue
 
-				if True:
-					mode_index = -1
-					for i, v in enumerate(argv):
-						if v[:2] == '-M':
-							mode = v[2:]
-							mode_index = i
-					
-					if mode_index != -1:
-						argv.pop(mode_index)
+			if i != 0:
+				log(f"found run mode '{v}', but it wasn't the first argument, "
+						 "please put the run mode in the first argument", fg=LogFGColors.Yellow)
 
-				verbose: SupportsIndex | bool = find(argv, '-v')
-				if verbose != -1:
-					argv.pop(verbose)
-					verbose = True
-				else:
-					verbose = False
+			command = Commands.commands[v]
+			command_index = i
+			break
 
-				root_dir = argv.pop() if argv else os.getcwd()
+	if command_index != -1:
+		argv.pop(command_index)
 
-				if (root_dir[0].lower() + root_dir[1:]) in ('debug', 'release', 'prod', 'production', 'export'):
-					msg = \
-							f"by passing the argument '{root_dir}', " + \
-							f"did you intend to build in '{root_dir}' mode? if you did, then pass '-M{root_dir}'"
-					log( msg, fg=LogFGColors.Blue )
-					break
+	if command is None:
+		log_err("no run command was found! please refer to help")
+		exit(1)
 
-				root_dir = Path(root_dir).resolve()
-				proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
-
-				if not root_dir.exists():
-					log(f"there is no pygnu project file at {proj_file}", fg=LogFGColors.Red)
-					break
-
-
-				if not proj_file.exists():
-					log(f"couldn't find the pygnu project file at {proj_file}", fg=LogFGColors.Red)
-					break
-
-				log(f"building '{mode}' mode of pygnu project at '{proj_file}'", fg=LogFGColors.BrightBlue)
-
-				with open(proj_file, 'r') as f:
-					data = json.load(f)
+	command(argv)
 				
-				log("loaded data for json-formated pygnu project from file", fg=LogFGColors.BrightBlack)
-				log("deserializing pygnu project data", fg=LogFGColors.BrightBlack)
-
-				raise_log_indent()
-				project, project_needs_resaving = Project.from_data(data, root_dir)
-				drop_log_indent()
-
-				log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
-
-				if project_needs_resaving:
-					log("resaving project to apply fixes", fg=LogFGColors.Yellow)
-					shutil.copy(proj_file, str(proj_file) + ".last")
-					with open(proj_file, 'w') as f:
-						json.dump(project.to_data(), f, indent=4, default=str)
-
-				# log("checking paramters")
-
-				for i in project.build_configs:
-					index = find(argv, i)
-					if index != -1:
-						msg = \
-							f"by passing the argument '{i}', " + \
-							f"did you intend to build in '{i}' mode? if you did, then pass '-M{i}'"
-						log( msg, fg=LogFGColors.Blue )
-
-				log(f"building '{mode}'", fg=LogFGColors.BrightBlack)
-				
-				raise_log_indent()
-				if not project.build(mode, verbose):
-					log("building failed!", fg=LogFGColors.Red)
-				drop_log_indent()
-
-				end_time = (time_ns() - start_time) / 1_000_000
-				log(f"---- done in {end_time}ms ----", fg=LogFGColors.BrightGreen)
 
 	# for i in d2.get_build_commands('debug'):
 		
