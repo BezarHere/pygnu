@@ -1,5 +1,3 @@
-import abc
-from ast import Call
 import enum
 from functools import cache
 import glob
@@ -10,10 +8,8 @@ import json
 import os
 import shutil
 import sys
-from textwrap import wrap
 from time import time_ns
-from turtle import color
-from typing import Any, Callable, Iterable, Self, SupportsIndex, override
+from typing import Any, Callable, Iterable, Self, SupportsIndex
 from pathlib import Path
 import traceback
 
@@ -434,7 +430,7 @@ class BuildConfiguration:
 		self.linker_args = list()
 		self.preprocessor_args = list()
 
-	def create_commandline(self):
+	def create_commandline(self, mid_section: str):
 		cl = []
 		for i, v in self.predefines.items():
 			if v is not None:
@@ -464,10 +460,12 @@ class BuildConfiguration:
 			cl.append('-I')
 			cl.append(i)
 
-		cl.append(self.libraries.commandlet)
 
 		cl.append(SymbolStrippingType.name(self.striping))
 
+		cl.append(mid_section)
+
+		cl.append(self.libraries.commandlet)
 		
 		# remove empty commandlets
 		return ' '.join(i for i in cl if i)
@@ -791,35 +789,30 @@ class Project:
 		for i in self.gather_source_files():
 			cs = []
 			cs.append(Project.GCC_ARG)
-			cs.append(config.create_commandline())
-			cs.append('-c')
-			cs.append(f'"{i}"')
-			cs.append('-o')
+			
 			
 			basename = '.'.join(Path(i).resolve().name.split('.')[:-1])
 
 			obj_filepath = self.output_cache_dir.joinpath(basename + '.o')
 			object_files.append(obj_filepath)
-			cs.append(f'"{obj_filepath}"')
+
+			cs.append(config.create_commandline(f'-c "{i}" -o "{obj_filepath}"'))
 			ls.append((' '.join(cs), i))
 		
-		final = []
-
-		final.append(Project.GCC_ARG)
-		final.append(config.create_commandline())
-
-		for i in object_files:
-			final.append(f'"{i}"')
-
-		final.append('-o')
 		
 		output_file = ''
 		if os.name == 'nt':
 			output_file = self.output_dir.joinpath(f"{self.output_name}.exe")
 		else:
 			output_file = self.output_dir.joinpath(f"{self.output_name}.out")
+		
+		obj_file_paths = ' '.join(f'"{i}"' for i in object_files)
 
-		final.append(f'"{output_file}"')
+		final = []
+
+		final.append(Project.GCC_ARG)
+
+		final.append(config.create_commandline(f'{obj_file_paths} -o "{output_file}"'))
 
 		ls.append((' '.join(final), output_file))
 
@@ -924,6 +917,7 @@ class Commands:
 	__new__ = None
 	_new_help_desc = ""
 	_build_help_desc = ""
+	_edit_help_desc = ""
 
 	#* CommandAction should always come before the staticmethod decorator
 
@@ -1047,6 +1041,11 @@ class Commands:
 		end_time = (time_ns() - start_time) / 1_000_000
 		log(f"---- done in {end_time}ms ----", fg=LogFGColors.BrightGreen)
 		return True
+
+	@CommandAction(name='edit', desc='edits the given pygnu project', help_desc=_edit_help_desc)
+	@staticmethod
+	def edit(argv: list[str]):
+		...
 
 	@CommandAction(name='help', desc='shows help on given command or general help if non is given',
 								 help_desc='no help on help? :[')
