@@ -4,6 +4,7 @@ import glob
 
 from dataclasses import dataclass
 from hashlib import sha1
+from io import StringIO
 import json
 import os
 import shutil
@@ -107,6 +108,7 @@ class CommandAction:
 
 
 class OptimizationType(enum.IntEnum):
+	Invalid = -1
 	Debug = 0 # -g[x] -Og
 	Speed = 1 # -O[x]
 	Size = 2 # -Oz
@@ -114,12 +116,63 @@ class OptimizationType(enum.IntEnum):
 	SpeedX = 4 # -Ofast <- maybe not conforming to the C/C++ standard
 	RawDebug = 5 # -g[x] only
 
+	@property
+	def setting_name(self):
+		for i, v in OptimizationType._member_map_.items():
+			if v == self:
+				return i.lower()
+		return 'debug'
+
+	@staticmethod
+	def parse(val):
+		if isinstance(val, int | OptimizationType):
+			val = max(min(5, val), 0)
+			return OptimizationType(val)
+		elif isinstance(val, str):
+			val = val.lower()
+			for i in OptimizationType._member_map_:
+				if i.lower() == val:
+					return OptimizationType._member_map_[i]
+		return OptimizationType.Invalid
+
 class OptimizationLevel(enum.IntEnum):
-	NoneOptimized = 0
+	Invalid = -1
+	NoOptimization = 0
 	Low = 1
 	Medium = 2
 	High = 3
 	Extreme = 4
+
+	__normalized_names_ = \
+		{
+			('no_optimization',): NoOptimization,
+			('low',): Low,
+			('med', 'medium'): Medium,
+			('high',): High,
+			('extreme', 'extra'): Extreme
+		}
+	
+	__rev_normalized_names_ = {v: i for i, v in __normalized_names_.items()}
+
+	@property
+	def setting_name(self):
+		return OptimizationLevel.__rev_normalized_names_.get(self, 'med')[0]
+
+	@staticmethod
+	def parse(val):
+		if isinstance(val, int | OptimizationType):
+			val = max(min(4, val), 0)
+			return OptimizationType(val)
+		elif isinstance(val, str):
+			val = val.lower()
+
+			for v in OptimizationLevel.__normalized_names_:
+				
+				for n in v:
+					if n == val:
+						return OptimizationLevel.__normalized_names_[v]
+				
+		return OptimizationType.Invalid
 
 class CppStandard(enum.IntEnum):
 	C98 = 0
@@ -291,7 +344,7 @@ class Optimization:
 
 	@property
 	def commandlet(self):
-		if self.opt_level == OptimizationLevel.NoneOptimized:
+		if self.opt_level == OptimizationLevel.NoOptimization:
 			return ""
 
 		match (self.opt_type):
@@ -500,17 +553,34 @@ class BuildConfiguration:
 
 		# optimization
 
-		c.optimization.opt_level = data.get("optimization_lvl", c.optimization.opt_level)
-		if not isinstance(c.optimization.opt_level, int | OptimizationLevel):
-			raise ValueError(f"invalid optimization.opt_level value: \"{c.optimization.opt_level}\"")	
+		opt_level_raw = data.get("optimization_lvl", c.optimization.opt_level)
+		c.optimization.opt_level = \
+			OptimizationLevel.parse(opt_level_raw)
+		
+		if c.optimization.opt_level == OptimizationLevel.Invalid:
+			is_string = isinstance(opt_level_raw, str)
+			sub = '"' if is_string else ''
+			log_err(f"invalid optimization level value: {sub}{ opt_level_raw }{sub}")
+			c.optimization.opt_level = OptimizationLevel.Medium
 
-		c.optimization.opt_level = OptimizationLevel(c.optimization.opt_level)
+			log(f"resseting optimization level value to \"{c.optimization.opt_level.setting_name}\"",
+			 fg=LogFGColors.Green)
+			reset_anything = True
 
-		c.optimization.opt_type = data.get("optimization_type", c.optimization.opt_type)
-		if not isinstance(c.optimization.opt_type, int | OptimizationType):
-			raise ValueError(f"invalid optimization.opt_type value: \"{c.optimization.opt_type}\"")	
 
-		c.optimization.opt_type = OptimizationType(c.optimization.opt_type)
+		opt_type_raw = data.get("optimization_type", c.optimization.opt_type)
+		c.optimization.opt_type = \
+			OptimizationType.parse(opt_type_raw)
+		
+		if c.optimization.opt_type == OptimizationType.Invalid:
+			is_string = isinstance(opt_type_raw, str)
+			sub = '"' if is_string else ''
+			log_err(f"invalid optimization type value: {sub}{ opt_type_raw }{sub}")
+			c.optimization.opt_type = OptimizationType.Debug
+
+			log(f"resseting optimization type value to \"{c.optimization.opt_type.setting_name}\"",
+			 fg=LogFGColors.Green)
+			reset_anything = True
 
 		# standard
 
@@ -620,8 +690,8 @@ class BuildConfiguration:
 
 		data["predefines"] = self.predefines.copy()
 
-		data["optimization_lvl"] = int(self.optimization.opt_level)
-		data["optimization_type"] = int(self.optimization.opt_level)
+		data["optimization_lvl"] = OptimizationLevel(self.optimization.opt_level).setting_name
+		data["optimization_type"] = OptimizationType(self.optimization.opt_type).setting_name
 
 		data["standard"] = CppStandard.name(self.standard)
 
@@ -962,9 +1032,13 @@ class Commands:
 		
 		defualt_prj: Project = Project.get_default_project(root_dir)
 		data = defualt_prj.to_data()
+		sio = StringIO()
+		json.dump(data, sio, default=lambda x: str(x), indent=4)
+
 
 		with open(proj_file, 'w') as f:
-			json.dump(data, f, default=lambda x: str(x), indent=4)
+			f.write(sio.getvalue())
+			
 		
 		log(f"created pygnu project file at '{proj_file}'", fg=LogFGColors.BrightGreen)
 		return True
@@ -1030,8 +1104,13 @@ class Commands:
 		if project_needs_resaving:
 			log("resaving project to apply fixes", fg=LogFGColors.Yellow)
 			shutil.copy(proj_file, str(proj_file) + ".last")
+
+			io = StringIO()
+			json.dump(project.to_data(), io, indent=4, default=str)
+
 			with open(proj_file, 'w') as f:
-				json.dump(project.to_data(), f, indent=4, default=str)
+				f.write(io.getvalue())
+				
 
 		# log("checking paramters")
 
