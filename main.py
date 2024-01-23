@@ -156,13 +156,13 @@ class OptimizationLevel(enum.IntEnum):
 
 	@property
 	def setting_name(self):
-		return OptimizationLevel.__rev_normalized_names_.get(self, 'med')[0]
+		return OptimizationLevel.__rev_normalized_names_.get(self, ('med', ))[0]
 
 	@staticmethod
 	def parse(val):
-		if isinstance(val, int | OptimizationType):
+		if isinstance(val, int | OptimizationLevel):
 			val = max(min(4, val), 0)
-			return OptimizationType(val)
+			return OptimizationLevel(val)
 		elif isinstance(val, str):
 			val = val.lower()
 
@@ -172,7 +172,7 @@ class OptimizationLevel(enum.IntEnum):
 					if n == val:
 						return OptimizationLevel.__normalized_names_[v]
 				
-		return OptimizationType.Invalid
+		return OptimizationLevel.Invalid
 
 class CppStandard(enum.IntEnum):
 	C98 = 0
@@ -329,10 +329,42 @@ class SymbolStrippingType(enum.IntEnum):
 				return '--strip-all'
 
 class WarningLevel(enum.IntEnum):
+	Invalid = -1
 	NoWarnings = 0
 	NormalWarnings = 1
 	AllWarnings = 2
 	ExtraWarnings = 3
+
+	__normalized_names_ = \
+		{
+			('no_warnings', 'disabled'): NoWarnings,
+			('low', 'normal'): NormalWarnings,
+			('all', 'med', 'medium'): AllWarnings,
+			('extra',): ExtraWarnings
+		}
+	
+	__rev_normalized_names_ = {v: i for i, v in __normalized_names_.items()}
+
+	@property
+	def setting_name(self):
+		return WarningLevel.__rev_normalized_names_.get(self, ('normal',))[0]
+
+	@staticmethod
+	def parse(val):
+		if isinstance(val, int | WarningLevel):
+			val = max(min(3, val), 0)
+			return WarningLevel(val)
+		elif isinstance(val, str):
+			val = val.lower()
+
+			for v in WarningLevel.__normalized_names_:
+				
+				for n in v:
+					if n == val:
+						return WarningLevel.__normalized_names_[v]
+				
+		return WarningLevel.Invalid
+
 
 @dataclass(slots=True)
 class Optimization:
@@ -601,11 +633,18 @@ class BuildConfiguration:
 
 		# warnings
 
-		c.warnings.level = data.get("warning_level", c.warnings.level)
-		if not isinstance(c.warnings.level, int | WarningLevel):
-			raise ValueError(f"invalid warning level value: \"{c.warnings.level}\"")	
+		warning_level_raw = data.get("warning_level", c.warnings.level)
+		c.warnings.level = WarningLevel.parse(warning_level_raw)
 
-		c.warnings.level = WarningLevel(c.warnings.level)
+		if c.warnings.level == WarningLevel.Invalid:
+			is_string = isinstance(warning_level_raw, str)
+			sub = '"' if is_string else ''
+			log_err(f"invalid warning level value: {sub}{ warning_level_raw }{sub}")
+			c.warnings.level = WarningLevel.AllWarnings
+
+			log(f"resseting warning level value to \"{c.warnings.level.setting_name}\"",
+			 fg=LogFGColors.Green)
+			reset_anything = True
 
 		c.warnings.pedantic = data.get("warning_pedantic", c.warnings.pedantic)
 		if not isinstance(c.warnings.pedantic, bool):
@@ -695,7 +734,7 @@ class BuildConfiguration:
 
 		data["standard"] = CppStandard.name(self.standard)
 
-		data["warning_level"] = int(self.warnings.level)
+		data["warning_level"] = WarningLevel(self.warnings.level).setting_name
 		data["warning_pedantic"] = self.warnings.pedantic
 
 		for i in ("print_includes", "catch_typos",
