@@ -423,7 +423,7 @@ class BuildConfiguration:
 		self.print_stats = True
 
 		self.include_dirs = list()
-		self.libraries = LibrariesOptions(dict(), list())
+		self.libraries = LibrariesOptions(list(), list())
 		self.striping = SymbolStrippingType.DontStrip
 
 		self.assempler_args = list()
