@@ -760,8 +760,20 @@ class Project:
 	def to_data(self):
 		data = {}
 
-		data["output_dir"] = str(self.output_dir.relative_to(self.project_dir))
-		data["output_cache_dir"] = str(self.output_cache_dir.relative_to(self.project_dir))
+		if self.output_dir.is_relative_to(self.project_dir):
+			data["output_dir"] = str(self.output_dir.relative_to(self.project_dir))
+		elif self.output_dir.absolute() == self.project_dir.absolute():
+			data["output_dir"] = '.'
+		else:
+			data["output_dir"] = str(self.output_dir.absolute())
+		
+		if self.output_cache_dir.is_relative_to(self.project_dir):
+			data["output_cache_dir"] = str(self.output_cache_dir.relative_to(self.project_dir))
+		elif self.output_cache_dir.absolute() == self.project_dir.absolute():
+			data["output_cache_dir"] = '.'
+		else:
+			data["output_cache_dir"] = str(self.output_cache_dir.absolute())
+
 		data["output_name"] = str(self.output_name)
 
 		data["source_selectors"] = self.source_selector._states
