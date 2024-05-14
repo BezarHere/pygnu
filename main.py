@@ -100,7 +100,7 @@ def hash_src(src: str):
 _HASH_SUFFIX_TABLE = '@!' + string.digits + string.ascii_letters
 
 def get_hash_suffix(src: str):
-	val = hash(src)
+	val = hash_src(src)
 	
 	return ''.join(_HASH_SUFFIX_TABLE[(val >> (i * 4)) & 0xf] for i in range(16))
 
@@ -904,7 +904,34 @@ class Project:
 	def gather_source_files(self):
 		return self.source_selector(self.project_dir)
 
-	def get_build_commands(self, config_name: str):
+	def _get_cached_objects_list_filepath(self):
+		return self.output_cache_dir.joinpath("build.files")
+
+	def _can_be_cached_object_path(self, path: Path):
+		return path.parent.resolve().absolute() == self.output_cache_dir
+
+	def _save_compile_objects(self, objects: Iterable[Path | str]):
+		objs_path = self._get_cached_objects_list_filepath()
+		with open(objs_path, 'w') as f:
+			f.writelines(map(str, objects))
+
+	def _get_cached_objects(self):
+		objs_path = self._get_cached_objects_list_filepath()
+		if not objs_path.exists():
+			return
+		
+		with open(objs_path, 'r') as f:
+			lines = f.readlines()
+		
+		return (Path(i) for i in lines)
+
+	def _delete_cached_obj_files(self, objects: set[Path]):
+		for i in objects:
+			# extra checks for security
+			if i.exists() and self._can_be_cached_object_path(i):
+				os.remove(i)
+
+	def get_build_commands(self, config_name: str, object_files: set[Path] | None = None):
 		if not config_name in self.build_configs:
 			log(f"build config '{config_name}' doesn't exist!")
 			return []
@@ -912,7 +939,8 @@ class Project:
 		ls = []
 		config = self.build_configs[config_name]
 
-		object_files = []
+		if object_files == None:
+			object_files = set()
 
 		for i in self.gather_source_files():
 			suffix = ''
@@ -921,31 +949,35 @@ class Project:
 					suffix = '-' + get_hash_suffix(f.read()) 
 
 			
-			
-			
-			
 			basename = '.'.join(Path(i).resolve().name.split('.')[:-1]) + suffix
 
 			obj_filepath = self.output_cache_dir.joinpath(basename + '.o')
+			
+			# include compiled object to be processed
+			object_files.add(obj_filepath)
+
 
 			# object file already compiled, no need to recompile
 			if obj_filepath.exists():
 				continue
 
-			object_files.append(obj_filepath)
 
+			# adding compile file arguments
 			cs = []
 			cs.append(Project.GCC_ARG)
 			cs.append(config.create_commandline(f'-c "{i}" -o "{obj_filepath}"'))
 			ls.append((' '.join(cs), i))
 		
-		
+		# save the compile object (compiled c/c++) names, for cleanup of checks
+		self._save_compile_objects(object_files)
+
 		output_file = ''
 		if os.name == 'nt':
 			output_file = self.output_dir.joinpath(f"{self.output_name}.exe")
 		else:
 			output_file = self.output_dir.joinpath(f"{self.output_name}.out")
 		
+
 		obj_file_paths = ' '.join(f'"{i}"' for i in object_files)
 
 		final = []
@@ -1000,7 +1032,18 @@ class Project:
 			log(f"created output cache directory at '{self.output_cache_dir}'", fg=LogFGColors.Green)
 			self.output_cache_dir.mkdir(exist_ok=True, parents=True)
 
-		for cmd, file in self.get_build_commands(config):
+		# cleanup old object files before rebuilding them in get_build_commands()
+		
+		cached_obj_files = self._get_cached_objects()
+		if cached_obj_files is None:
+			cached_obj_files = set()
+		else:
+			cached_obj_files = set(cached_obj_files)
+		
+		used_obj_files = set()
+
+		# 'used_obj_files' is an out parameter
+		for cmd, file in self.get_build_commands(config, used_obj_files):
 			file = Path(file).resolve()
 
 			if verbose:
@@ -1014,6 +1057,10 @@ class Project:
 				log(f"failed to execute system cmd: \"{cmd}\"", fg=LogFGColors.BrightRed)
 			else:
 				log(f"compiled '{file.relative_to(self.project_dir)}'", fg=LogFGColors.BrightBlack)
+		
+		log("clearing old objects", fg=LogFGColors.BrightBlack)
+		unused_object_files = cached_obj_files - used_obj_files
+		self._delete_cached_obj_files(unused_object_files)
 		return True
 
 def find(it: Iterable, value) -> SupportsIndex:

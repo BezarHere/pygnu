@@ -1,7 +1,7 @@
 {
-    "output_dir": ".",
-    "output_cache_dir": ".",
-    "output_name": "output",
+    "output_dir": "out",
+    "output_cache_dir": "out/cache",
+    "output_name": "main",
     "source_selectors": [
         "**/*.c",
         "**/*.cpp",
