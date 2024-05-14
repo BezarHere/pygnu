@@ -1,3 +1,4 @@
+import base64
 import enum
 from functools import cache
 import glob
@@ -8,6 +9,7 @@ from io import StringIO
 import json
 import os
 import shutil
+import string
 import sys
 from time import time_ns
 from typing import Any, Callable, Iterable, Self, SupportsIndex
@@ -78,10 +80,6 @@ def log_err( *values: object ):
 
 	drop_log_indent()
 
-@cache
-def hash_src(src: str):
-	return int.from_bytes(sha1(src.encode(), usedforsecurity=False).digest(), 'big', signed=False)
-
 def read_data(obj: object, data: dict[str],
 							property_name: str, key_name: str,
 							property_validator: type | Callable[[Any], bool] | None = None,
@@ -95,6 +93,16 @@ def read_data(obj: object, data: dict[str],
 	if error is None:
 		def _err(found_data):
 			log_err("invalid data value")
+
+def hash_src(src: str):
+	return int.from_bytes(sha1(src.encode(), usedforsecurity=False).digest(), 'big', signed=False)
+
+_HASH_SUFFIX_TABLE = '@!' + string.digits + string.ascii_letters
+
+def get_hash_suffix(src: str):
+	val = hash(src)
+	
+	return ''.join(_HASH_SUFFIX_TABLE[(val >> (i * 4)) & 0xf] for i in range(16))
 
 @dataclass(slots=True, frozen=True)
 class CommandAction:
@@ -113,7 +121,7 @@ class OptimizationType(enum.IntEnum):
 	Speed = 1 # -O[x]
 	Size = 2 # -Oz
 	Space = 3 # -Os
-	SpeedX = 4 # -Ofast <- maybe not conforming to the C/C++ standard
+	SpeedX = 4 # -Ofast
 	RawDebug = 5 # -g[x] only
 
 	@property
@@ -364,7 +372,6 @@ class WarningLevel(enum.IntEnum):
 						return WarningLevel.__normalized_names_[v]
 				
 		return WarningLevel.Invalid
-
 
 @dataclass(slots=True)
 class Optimization:
@@ -908,15 +915,27 @@ class Project:
 		object_files = []
 
 		for i in self.gather_source_files():
-			cs = []
-			cs.append(Project.GCC_ARG)
+			suffix = ''
+			if os.path.exists(i):
+				with open(i, 'r') as f:
+					suffix = get_hash_suffix(f.read())
+
 			
 			
-			basename = '.'.join(Path(i).resolve().name.split('.')[:-1])
+			
+			
+			basename = '.'.join(Path(i).resolve().name.split('.')[:-1]) + suffix
 
 			obj_filepath = self.output_cache_dir.joinpath(basename + '.o')
+
+			# object file already compiled, no need to recompile
+			if obj_filepath.exists():
+				continue
+
 			object_files.append(obj_filepath)
 
+			cs = []
+			cs.append(Project.GCC_ARG)
 			cs.append(config.create_commandline(f'-c "{i}" -o "{obj_filepath}"'))
 			ls.append((' '.join(cs), i))
 		
@@ -955,11 +974,11 @@ class Project:
 			project_path, Path(), Path(), 'output',
 			dict(debug=debug_build, release=release_build) )
 
-	def build(self, confg: str, verbose: bool = False):
-		"""returns weather the build succesful"""
+	def build(self, config: str, verbose: bool = False):
+		"""returns weather the build successful"""
 
-		if not confg in self.build_configs:
-			log(f"project: no config with name '{confg}'", fg=LogFGColors.BrightYellow)
+		if not config in self.build_configs:
+			log(f"project: no config with name '{config}'", fg=LogFGColors.BrightYellow)
 			configs_str = []
 			for i in self.build_configs:
 				configs_str.append(i)
@@ -981,7 +1000,7 @@ class Project:
 			log(f"created output cache directory at '{self.output_cache_dir}'", fg=LogFGColors.Green)
 			self.output_cache_dir.mkdir(exist_ok=True, parents=True)
 
-		for cmd, file in self.get_build_commands(confg):
+		for cmd, file in self.get_build_commands(config):
 			file = Path(file).resolve()
 
 			if verbose:

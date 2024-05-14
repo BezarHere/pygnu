@@ -1,56 +1,58 @@
 {
- "output_dir": "F:\\Assets\\py\\pygnu",
- "output_cache_dir": "F:\\Assets\\py\\pygnu",
- "output_name": "output",
- "source_selectors": [
-  "**/*.c",
-  "**/*.cpp",
-  "**/*.cc",
-  "**/*.cxx"
- ],
- "build_configurations": {
-  "debug": {
-   "predefines": {
-    "_DEBUG": null
-   },
-   "optimization_lvl": 2,
-   "optimization_type": 2,
-   "standard": "c17",
-   "warning_level": 2,
-   "warning_pedantic": false,
-   "print_includes": false,
-   "catch_typos": true,
-   "exit_on_errors": true,
-   "dynamicly_linkable": true,
-   "print_stats": true,
-   "include_dirs": [],
-   "lib_dirs": [],
-   "lib_names": [],
-   "assempler_args": [],
-   "linker_args": [],
-   "preprocessor_args": []
-  },
-  "release": {
-   "predefines": {
-    "NDEBUG": null,
-    "_RELEASE": null
-   },
-   "optimization_lvl": 4,
-   "optimization_type": 4,
-   "standard": "c17",
-   "warning_level": 2,
-   "warning_pedantic": false,
-   "print_includes": false,
-   "catch_typos": true,
-   "exit_on_errors": true,
-   "dynamicly_linkable": true,
-   "print_stats": true,
-   "include_dirs": [],
-   "lib_dirs": [],
-   "lib_names": [],
-   "assempler_args": [],
-   "linker_args": [],
-   "preprocessor_args": []
-  }
- }
+    "output_dir": ".",
+    "output_cache_dir": ".",
+    "output_name": "output",
+    "source_selectors": [
+        "**/*.c",
+        "**/*.cpp",
+        "**/*.cc",
+        "**/*.cxx"
+    ],
+    "build_configurations": {
+        "debug": {
+            "predefines": {
+                "_DEBUG": null
+            },
+            "optimization_lvl": "med4",
+            "optimization_type": "size",
+            "standard": "c17",
+            "warning_level": 2,
+            "warning_pedantic": false,
+            "print_includes": false,
+            "catch_typos": true,
+            "exit_on_errors": true,
+            "dynamicly_linkable": true,
+            "print_stats": true,
+            "simd_type": "sse",
+            "include_dirs": [],
+            "lib_dirs": [],
+            "lib_names": [],
+            "assempler_args": [],
+            "linker_args": [],
+            "preprocessor_args": []
+        },
+        "release": {
+            "predefines": {
+                "NDEBUG": null,
+                "_RELEASE": null
+            },
+            "optimization_lvl": "med",
+            "optimization_type": "debug",
+            "standard": "c17",
+            "warning_level": 2,
+            "warning_pedantic": false,
+            "print_includes": false,
+            "catch_typos": true,
+            "exit_on_errors": true,
+            "dynamicly_linkable": true,
+            "print_stats": true,
+            "simd_type": "sse",
+            "include_dirs": [],
+            "lib_dirs": [],
+            "lib_names": [],
+            "assempler_args": [],
+            "linker_args": [],
+            "preprocessor_args": []
+        }
+    }
 }
