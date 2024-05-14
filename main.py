@@ -918,7 +918,7 @@ class Project:
 			suffix = ''
 			if os.path.exists(i):
 				with open(i, 'r') as f:
-					suffix = get_hash_suffix(f.read())
+					suffix = '-' + get_hash_suffix(f.read()) 
 
 			
 			
