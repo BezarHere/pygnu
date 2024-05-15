@@ -1,6 +1,8 @@
 # pygnu
 Project manager &amp; builder for GCC
 
+*please star pygnu, it really help*
+
 ## arguments
 
 ### new
@@ -13,12 +15,12 @@ builds the project in the working or directory (`pygnu.json`)  if not other dire
 
 ### help
 
-the `help` initiates a video call with *dave*, also shows the descriptions and uses of other commands/flags
+the `help` initiates a video call with *alex & teather*, also shows the descriptions and uses of other commands/flags
 
 ## multiple build configurations
 
-you can specify the build configuration ('mode') by passing -M\<build config name> (a single argument, can use qouts for spaces)
-not specifing the build mode will default to `debug`; if there is no build mode of name `debug`, an error message will be displayed
+you can specify the build configuration ('mode') by passing -M\<build config name> (a single argument, can use quots for spaces)
+not specifying the build mode will default to `debug`; if there is no build mode of name `debug`, an error message will be displayed
 
 ## pygnu.json?
 
@@ -87,9 +89,8 @@ self documented, easy to understand:
 
 ### NOTES
 
-1. pygnu is in early develpment, so you might see a bug here and there
-2. C/C++ are the most supported, others can build but it might be hassle
-3. *dave* is always busy
+1. pygnu is in early development, so you might see a bug here and there
+2. C/C++ are the most supported, others can build but it might be hassle (btw c++ is still broken)
 
 ---
 
