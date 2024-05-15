@@ -14,15 +14,17 @@ from time import time_ns
 from typing import Any, Callable, Iterable, Self, SupportsIndex
 from pathlib import Path
 import traceback
-import preprocessor as c_pre
 
-DEFUALT_PROJ_FILENAME = 'pygnu.json'
+import preprocessor as c_pre
+from args import Argument, ArgumentList
+
+DEFAULT_PROJ_FILENAME = 'pygnu.json'
 _LOG_INDENT_LEVEL = 0
 _LOG_INDENT_LEVEL_S = ''
 _LOG_DIRTY_LAST_PRINT = True
 _LOG_USE_COLOR = True
 
-_VERSION = 1, 0, 0
+_VERSION = 1, 1, 0
 _VERBOSE = False
 
 class LogFGColors(enum.IntEnum):
@@ -111,7 +113,6 @@ _HASH_SUFFIX_LEN = 16 # 16 nibbles in 64 bits
 
 _UNIQUE_SUFFIX_CACHE: dict[Path, tuple[int, str]] = {}
 
-#! FIXME: Editing an included header doesn't change the hash suffix
 # 'include_dirs' should NOT have the parent directory of 'path'
 def get_unique_suffix(source: str, path: Path, include_dirs: set[Path]):
 
@@ -145,7 +146,7 @@ class CommandAction:
 	desc: str
 	help_desc: str = 'undocumented'
 
-	def __call__(self, func: Callable[[Iterable[str]], Any]) -> Callable:
+	def __call__(self, func: Callable[[Iterable[Argument]], Any]) -> Callable:
 		func.command = self
 		return func
 
@@ -813,6 +814,8 @@ class Project:
 																										 "**/*.cc",
 																										 "**/*.cxx" ))
 	
+	rebuild_mode: bool = False
+
 	def replace_macros(self, path: str):
 		return path \
 			.replace('$(OutputDir)', str(self.output_dir)) \
@@ -979,7 +982,7 @@ class Project:
 
 		for i in self.gather_source_files():
 			suffix = ''
-			if os.path.exists(i):
+			if not self.rebuild_mode and os.path.exists(i):
 				with open(i, 'r') as f:
 					source = f.read()
 					suffix = '-' + get_unique_suffix(source, Path(i), {Path(i).parent})[1]
@@ -995,7 +998,8 @@ class Project:
 
 			# object file already compiled, no need to recompile
 	 		# TODO: use last written time to stop rehashing cold files
-			if obj_filepath.exists():
+			#! FIXME: this does not check for library changes
+			if not self.rebuild_mode and obj_filepath.exists():
 				continue
 
 
@@ -1149,21 +1153,15 @@ class Commands:
 
 	@CommandAction("new", "creates a new pygnu project", help_desc=_new_help_desc)
 	@staticmethod
-	def new(argv: list[str]):
-		overwrite = find(argv, '--overwrite')
+	def new(argv: ArgumentList):
+		overwrite = argv.extract('--overwrite') != None
 
-		if overwrite != -1:
-			argv.pop(overwrite)
-			overwrite = True
-		else:
-			overwrite = False
-
-		root_dir = argv.pop() if argv else os.getcwd()
+		root_dir = argv.next() if argv.can_read else os.getcwd()
 		root_dir = Path(root_dir).resolve()
 		if not root_dir.exists():
 			root_dir.mkdir(exist_ok=True, parents=True)
 
-		proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
+		proj_file = root_dir.joinpath(DEFAULT_PROJ_FILENAME)
 
 		if proj_file.exists():
 			if overwrite:
@@ -1189,28 +1187,20 @@ class Commands:
 
 	@CommandAction(name='build', desc='build the pygnu project', help_desc=_build_help_desc)
 	@staticmethod
-	def build(argv: list[str]):
+	def build(argv: ArgumentList):
 		start_time = time_ns()
 		mode = 'debug'
 
-		if True:
-			mode_index = -1
-			for i, v in enumerate(argv):
-				if v[:2] == '-M':
-					mode = v[2:]
-					mode_index = i
-			
-			if mode_index != -1:
-				argv.pop(mode_index)
+		mode_argument = argv.extract_match(lambda a: not a.used and a.content[2:] == '-M')
+		if mode_argument != None:
+			mode = mode_argument.content[:2]
 
-		verbose: SupportsIndex | bool = find(argv, '-v')
-		if verbose != -1:
-			argv.pop(verbose)
-			verbose = True
-		else:
-			verbose = False
+		verbose: bool = argv.extract('-v') != None
+		rebuild: bool = argv.extract_any('-r', '--rebuild') != None
+		
 
-		root_dir = argv.pop() if argv else os.getcwd()
+		root_dir = \
+			argv.next().content if argv.can_read and not argv.peek.content.startswith('-') else os.getcwd()
 
 		if (root_dir[0].lower() + root_dir[1:]) in ('debug', 'release', 'prod', 'production', 'export'):
 			msg = \
@@ -1220,7 +1210,7 @@ class Commands:
 			return False
 
 		root_dir = Path(root_dir).resolve()
-		proj_file = root_dir.joinpath(DEFUALT_PROJ_FILENAME)
+		proj_file = root_dir.joinpath(DEFAULT_PROJ_FILENAME)
 
 		if not root_dir.exists():
 			log(f"there is no pygnu project file at {proj_file}", fg=LogFGColors.Red)
@@ -1243,6 +1233,8 @@ class Commands:
 		project, project_needs_resaving = Project.from_data(data, root_dir)
 		drop_log_indent()
 
+		project.rebuild_mode = rebuild
+
 		log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
 
 		if project_needs_resaving:
@@ -1254,12 +1246,13 @@ class Commands:
 
 			with open(proj_file, 'w') as f:
 				f.write(io.getvalue())
-				
+		
 
-		# log("checking paramters")
+
+		# log("checking parameters")
 
 		for v in project.build_configs:
-			index = find(argv, v)
+			index = argv.find(v)
 			if index != -1:
 				msg = \
 					f"by passing the argument '{v}', " + \
@@ -1279,13 +1272,13 @@ class Commands:
 
 	@CommandAction(name='edit', desc='edits the given pygnu project', help_desc=_edit_help_desc)
 	@staticmethod
-	def edit(argv: list[str]):
-		...
+	def edit(argv: ArgumentList):
+		print("The edit command is not currently implemented.")
 
 	@CommandAction(name='help', desc='shows help on given command or general help if non is given',
 								 help_desc='no help on help? :[')
 	@staticmethod
-	def help(argv: list[str]):
+	def help(argv: ArgumentList):
 		for i, v in Commands.commands.items():
 			ca: CommandAction = v.command
 
@@ -1298,13 +1291,13 @@ class Commands:
 
 	@CommandAction(name='version', desc='prints out pygnu\'s version', help_desc='check you version to find help')
 	@staticmethod
-	def version(argv: list[str]):
+	def version(argv: ArgumentList):
 		log(f"PYGNU {'.'.join(map(str,_VERSION))} - Made by zahr abdu. babker", fg=LogFGColors.BrightWhite)
 
 def main():
 
 	argv = sys.argv.copy()[1:]
-	command: Callable | None = None
+	command: Callable[[ArgumentList], Any] | None = None
 	command_index = -1
 
 	for i, v in enumerate(argv):
@@ -1342,7 +1335,13 @@ def main():
 		log_err("no run command was found! please refer to help")
 		exit(1)
 
-	command(argv)
+	arg_list = ArgumentList(Argument.from_args(argv))
+	command(arg_list)
+
+	for i in arg_list.arguments:
+		if i.used:
+			continue
+		log(f"Unknown argument: '{i.content}'", fg=LogFGColors.Yellow)
 				
 
 	# for i in d2.get_build_commands('debug'):
