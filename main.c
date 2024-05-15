@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <Windows.h>
+#include "main.h"
+
 
 #define KB(n) ((1<<10) * n)
 

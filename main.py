@@ -1,4 +1,3 @@
-import base64
 import enum
 from functools import cache
 import glob
@@ -15,6 +14,7 @@ from time import time_ns
 from typing import Any, Callable, Iterable, Self, SupportsIndex
 from pathlib import Path
 import traceback
+import preprocessor as c_pre
 
 DEFUALT_PROJ_FILENAME = 'pygnu.json'
 _LOG_INDENT_LEVEL = 0
@@ -98,11 +98,43 @@ def hash_src(src: str):
 	return int.from_bytes(sha1(src.encode(), usedforsecurity=False).digest(), 'big', signed=False)
 
 _HASH_SUFFIX_TABLE = '@!' + string.digits + string.ascii_letters
+_HASH_SUFFIX_LEN = 16 # 16 nibbles in 64 bits
 
-def get_hash_suffix(src: str):
-	val = hash_src(src)
+# just returns a hash for the source, no checking includes
+# use this first to check if the file itself has changed
+# def get_source_hash_suffix(source: str):
+# 	val = hash_src(source)
+# 	return ''.join(_HASH_SUFFIX_TABLE[(val >> (i * 4)) & 0xf] for i in range(_HASH_SUFFIX_LEN))
+
+_UNIQUE_SUFFIX_CACHE: dict[Path, tuple[int, str]] = {}
+
+#! FIXME: Editing an included header doesn't change the hash suffix
+# 'include_dirs' should NOT have the parent directory of 'path'
+def get_unique_suffix(source: str, path: Path, include_dirs: set[Path]):
+
+	# check cache
+	if path in _UNIQUE_SUFFIX_CACHE:
+		return _UNIQUE_SUFFIX_CACHE[path]
 	
-	return ''.join(_HASH_SUFFIX_TABLE[(val >> (i * 4)) & 0xf] for i in range(16))
+	val = hash_src(source)
+
+	for i in c_pre.get_included_filepaths(source, path.parent, include_dirs):
+		# print(f"checking include for '{path}': '{i}'")
+
+		if i in _UNIQUE_SUFFIX_CACHE:
+			val ^= _UNIQUE_SUFFIX_CACHE[i][0]
+			# print(f"'{i}' is cached")
+			continue
+
+		# print(f"reading '{i}'")
+
+		with open(i, 'r') as f:
+			inc_src = f.read()
+		val ^= get_unique_suffix(inc_src, i, include_dirs)[0]
+	
+	result = ''.join(_HASH_SUFFIX_TABLE[(val >> (i * 4)) & 0xf] for i in range(_HASH_SUFFIX_LEN))
+	_UNIQUE_SUFFIX_CACHE[path] = (val, result)
+	return val, result
 
 @dataclass(slots=True, frozen=True)
 class CommandAction:
@@ -802,7 +834,7 @@ class Project:
 			c.project_dir = os.getcwd()
 			needs_resaving = True
 
-			log(f"resseting project directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
+			log(f"reseting project directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_dir, str | Path):
 			log_err(f"invalid output directory value: \"{c.output_dir}\"")
@@ -810,7 +842,7 @@ class Project:
 			c.output_dir = 'output'
 			needs_resaving = True
 
-			log(f"resseting output directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
+			log(f"reseting output directory value to \"{c.project_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_cache_dir, str | Path):
 			log_err(f"invalid output cache directory value: \"{c.output_cache_dir}\"")
@@ -818,7 +850,7 @@ class Project:
 			c.output_cache_dir = c.output_dir + '/cache'
 			needs_resaving = True
 
-			log(f"resseting output cache directory value to \"{c.output_cache_dir}\"", fg=LogFGColors.Green)
+			log(f"reseting output cache directory value to \"{c.output_cache_dir}\"", fg=LogFGColors.Green)
 		
 		if not isinstance(c.output_name, str | Path):
 			log_err(f"invalid output name value: \"{c.output_name}\"")
@@ -826,7 +858,7 @@ class Project:
 			c.output_name = 'output'
 			needs_resaving = True
 
-			log(f"resseting output name value to \"{c.output_name}\"", fg=LogFGColors.Green)
+			log(f"reseting output name value to \"{c.output_name}\"", fg=LogFGColors.Green)
 
 
 		c.project_dir = Path(c.project_dir).absolute()
@@ -913,7 +945,7 @@ class Project:
 	def _save_compile_objects(self, objects: Iterable[Path | str]):
 		objs_path = self._get_cached_objects_list_filepath()
 		with open(objs_path, 'w') as f:
-			f.writelines(map(str, objects))
+			f.writelines('\n'.join(map(str, objects)))
 
 	def _get_cached_objects(self):
 		objs_path = self._get_cached_objects_list_filepath()
@@ -923,7 +955,7 @@ class Project:
 		with open(objs_path, 'r') as f:
 			lines = f.readlines()
 		
-		return (Path(i) for i in lines)
+		return (Path(i) for i in lines if len(i) > _HASH_SUFFIX_LEN)
 
 	def _delete_cached_obj_files(self, objects: set[Path]):
 		for i in objects:
@@ -946,8 +978,9 @@ class Project:
 			suffix = ''
 			if os.path.exists(i):
 				with open(i, 'r') as f:
-					suffix = '-' + get_hash_suffix(f.read()) 
-
+					source = f.read()
+					suffix = '-' + get_unique_suffix(source, Path(i), {Path(i).parent})[1]
+				
 			
 			basename = '.'.join(Path(i).resolve().name.split('.')[:-1]) + suffix
 
@@ -958,6 +991,7 @@ class Project:
 
 
 			# object file already compiled, no need to recompile
+	 		# TODO: use last written time to stop rehashing cold files
 			if obj_filepath.exists():
 				continue
 
