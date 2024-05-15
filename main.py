@@ -22,6 +22,9 @@ _LOG_INDENT_LEVEL_S = ''
 _LOG_DIRTY_LAST_PRINT = True
 _LOG_USE_COLOR = True
 
+_VERSION = 1, 0, 0
+_VERBOSE = False
+
 class LogFGColors(enum.IntEnum):
 	Black = 30
 	Red = 31
@@ -1042,6 +1045,8 @@ class Project:
 
 	def build(self, config: str, verbose: bool = False):
 		"""returns weather the build successful"""
+		global _VERBOSE
+		_VERBOSE = verbose
 
 		if not config in self.build_configs:
 			log(f"project: no config with name '{config}'", fg=LogFGColors.BrightYellow)
@@ -1290,6 +1295,11 @@ class Commands:
 			log(ca.help_desc, fg=LogFGColors.BrightBlack)
 			drop_log_indent()
 		return True
+
+	@CommandAction(name='version', desc='prints out pygnu\'s version', help_desc='check you version to find help')
+	@staticmethod
+	def version(argv: list[str]):
+		log(f"PYGNU {'.'.join(map(str,_VERSION))} - Made by zahr abdu. babker", fg=LogFGColors.BrightWhite)
 
 def main():
 
