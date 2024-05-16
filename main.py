@@ -7,6 +7,7 @@ from hashlib import sha1
 from io import StringIO
 import json
 import os
+from re import VERBOSE
 import shutil
 import string
 import sys
@@ -118,12 +119,26 @@ def get_unique_suffix(source: str, path: Path, include_dirs: set[Path]):
 
 	# check cache
 	if path in _UNIQUE_SUFFIX_CACHE:
+		if _UNIQUE_SUFFIX_CACHE[path][1] == '':
+			log(
+				"'{path}' has a cycle-reference," \
+				"maybe it's including a file that is including it back",
+				fg=LogFGColors.BrightRed
+			)
+		# if VERBOSE:
+		# 	log(f"VERBOSE: {_UNIQUE_SUFFIX_CACHE[path]}", fg=LogFGColors.BrightBlack)
 		return _UNIQUE_SUFFIX_CACHE[path]
 	
+	_UNIQUE_SUFFIX_CACHE[path] = 0, ''
+
 	val = hash_src(source)
 
 	for i in c_pre.get_included_filepaths(source, path.parent, include_dirs):
-		# print(f"checking include for '{path}': '{i}'")
+		if i.absolute() == path.absolute():
+			continue
+
+		if VERBOSE:
+			log(f"VERBOSE: checking include for '{path}': '{i}'", fg=LogFGColors.BrightBlack)
 
 		if i in _UNIQUE_SUFFIX_CACHE:
 			val ^= _UNIQUE_SUFFIX_CACHE[i][0]
