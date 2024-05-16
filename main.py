@@ -7,7 +7,6 @@ from hashlib import sha1
 from io import StringIO
 import json
 import os
-from re import VERBOSE
 import shutil
 import string
 import sys
@@ -137,7 +136,7 @@ def get_unique_suffix(source: str, path: Path, include_dirs: set[Path]):
 		if i.absolute() == path.absolute():
 			continue
 
-		if VERBOSE:
+		if _VERBOSE:
 			log(f"VERBOSE: checking include for '{path}': '{i}'", fg=LogFGColors.BrightBlack)
 
 		if i in _UNIQUE_SUFFIX_CACHE:
@@ -1079,7 +1078,7 @@ class Project:
 
 		for i in self.gather_source_files():
 			suffix = ''
-			if not self._rebuild_mode and os.path.exists(i):
+			if os.path.exists(i):
 				with open(i, 'r') as f:
 					source = f.read()
 					suffix = '-' + get_unique_suffix(source, Path(i), {Path(i).parent})[1]
