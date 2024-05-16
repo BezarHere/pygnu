@@ -1240,7 +1240,17 @@ def commands_table():
 class Commands:
 	__new__ = None
 	_new_help_desc = ""
-	_build_help_desc = ""
+	_build_help_desc = \
+"""
+builds the projects in the working director or a specified project.
+usage: build [<project path>] [-M<config>] [-r/--rebuild] [--resave] [-v]
+-- '-M<config>' is the configuration used in the build, it defaults to debug ('-Mdebug')
+    note: the default project has two configs, 'debug' (-Mdebug) and 'release' (-Mrelease) 
+-- 'project path' is the path to the project config file, default to '{working directory}/pygnu.json'
+-- '-r'/'--rebuild' forces the project to rebuild everything, recommended if you encounter any bugs
+-- '--resave' will resave the project file, removing any unused fields + fixing invalid values
+    note: the project will resave if it detects an invalid value
+"""
 	_edit_help_desc = ""
 
 	#* CommandAction should always come before the staticmethod decorator
@@ -1343,9 +1353,7 @@ class Commands:
 
 			with open(proj_file, 'w') as f:
 				f.write(io.getvalue())
-		
-
-
+	
 		# log("checking parameters")
 
 		for v in project.build_configs:
