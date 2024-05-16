@@ -24,7 +24,7 @@ _LOG_INDENT_LEVEL_S = ''
 _LOG_DIRTY_LAST_PRINT = True
 _LOG_USE_COLOR = True
 
-_VERSION = 1, 1, 0
+_VERSION = 1, 2, 0
 _VERBOSE = False
 
 class LogFGColors(enum.IntEnum):
@@ -150,6 +150,15 @@ class CommandAction:
 		func.command = self
 		return func
 
+class SourceType(enum.IntEnum):
+	CLang = 0
+	CPP = 1
+
+	@staticmethod
+	def from_extension(extension: str):
+		if extension in ('cpp', 'cc', 'cxx', 'hpp', 'hxx', 'hh'):
+			return SourceType.CPP
+		return SourceType.CLang
 
 class OptimizationType(enum.IntEnum):
 	Invalid = -1
@@ -218,7 +227,10 @@ class OptimizationLevel(enum.IntEnum):
 				
 		return OptimizationLevel.Invalid
 
-class CppStandard(enum.IntEnum):
+_STANDARD_CPP_OFFSET = 0xff
+class SourceStandardVersion(enum.IntEnum):
+	Invalid = -1
+
 	C98 = 0
 	C11 = 1
 	C14 = 2
@@ -226,74 +238,83 @@ class CppStandard(enum.IntEnum):
 	C20 = 4
 	C2x = 5
 
-	Cpp98 = C98 + 0xff
-	Cpp11 = C11 + 0xff
-	Cpp14 = C14 + 0xff
-	Cpp17 = C17 + 0xff
-	Cpp20 = C20 + 0xff
-	Cpp2x = C2x + 0xff
-
-	C77 = 0xffff
+	Cpp98 = C98 + _STANDARD_CPP_OFFSET
+	Cpp11 = C11 + _STANDARD_CPP_OFFSET
+	Cpp14 = C14 + _STANDARD_CPP_OFFSET
+	Cpp17 = C17 + _STANDARD_CPP_OFFSET
+	Cpp20 = C20 + _STANDARD_CPP_OFFSET
+	Cpp2x = C2x + _STANDARD_CPP_OFFSET
 
 	@staticmethod
 	def parse(name: str):
 		match name:
 			case "c98":
-				return CppStandard.C98
+				return SourceStandardVersion.C98
 			case "c11":
-				return CppStandard.C11
+				return SourceStandardVersion.C11
 			case "c14":
-				return CppStandard.C14
+				return SourceStandardVersion.C14
 			case "c17":
-				return CppStandard.C17
+				return SourceStandardVersion.C17
 			case "c20":
-				return CppStandard.C20
+				return SourceStandardVersion.C20
 			case "c2x":
-				return CppStandard.C2x
+				return SourceStandardVersion.C2x
 			case "c++98":
-				return CppStandard.Cpp98
+				return SourceStandardVersion.Cpp98
 			case "c++11":
-				return CppStandard.Cpp11
+				return SourceStandardVersion.Cpp11
 			case "c++14":
-				return CppStandard.Cpp14
+				return SourceStandardVersion.Cpp14
 			case "c++17":
-				return CppStandard.Cpp17
+				return SourceStandardVersion.Cpp17
 			case "c++20":
-				return CppStandard.Cpp20
+				return SourceStandardVersion.Cpp20
 			case "c++2x":
-				return CppStandard.Cpp2x
+				return SourceStandardVersion.Cpp2x
 			case _:
-				return CppStandard.C77
+				return SourceStandardVersion.Invalid
 
 	@staticmethod
 	def name(value):
 		match value:
-			case CppStandard.C98:
+			case SourceStandardVersion.C98:
 				return "c98"
-			case CppStandard.C11:
+			case SourceStandardVersion.C11:
 				return "c11"
-			case CppStandard.C14:
+			case SourceStandardVersion.C14:
 				return "c14"
-			case CppStandard.C17:
+			case SourceStandardVersion.C17:
 				return "c17"
-			case CppStandard.C20:
+			case SourceStandardVersion.C20:
 				return "c20"
-			case CppStandard.C2x:
+			case SourceStandardVersion.C2x:
 				return "c2x"
-			case CppStandard.Cpp98:
+			case SourceStandardVersion.Cpp98:
 				return "c++98"
-			case CppStandard.Cpp11:
+			case SourceStandardVersion.Cpp11:
 				return "c++11"
-			case CppStandard.Cpp14:
+			case SourceStandardVersion.Cpp14:
 				return "c++14"
-			case CppStandard.Cpp17:
+			case SourceStandardVersion.Cpp17:
 				return "c++17"
-			case CppStandard.Cpp20:
+			case SourceStandardVersion.Cpp20:
 				return "c++20"
-			case CppStandard.Cpp2x:
+			case SourceStandardVersion.Cpp2x:
 				return "c++2x"
 			case _:
 				return "c++17"
+
+	@staticmethod
+	def name_for_source_type(value, source_type: SourceType):
+		if source_type == SourceType.CPP:
+			if value < _STANDARD_CPP_OFFSET:
+				value += _STANDARD_CPP_OFFSET
+		elif source_type == SourceType.CLang:
+			if value >= _STANDARD_CPP_OFFSET:
+				value -= _STANDARD_CPP_OFFSET
+		return SourceStandardVersion.name(value)
+
 
 class SIMDType(enum.IntEnum):
 	Invalid = -1
@@ -499,7 +520,7 @@ class LibrariesOptions:
 class BuildConfiguration:
 	predefines: dict[str, str | None] # -D[N1] -D[N2] ... -D[Nx]
 	optimization: Optimization
-	standard: CppStandard = CppStandard.C17 # -std=[X] 
+	standard: SourceStandardVersion = SourceStandardVersion.C17 # -std=[X] 
 	warnings: WarningsOptions
 
 	simd_type: SIMDType
@@ -507,7 +528,7 @@ class BuildConfiguration:
 	print_includes: bool = False # -H
 	catch_typos: bool = True # -gant
 	exit_on_errors: bool = False # -Wfatal-errors
-	dynamicly_linkable: bool = True # --no-dynamic-linker
+	dynamically_linkable: bool = True # --no-dynamic-linker
 	print_stats: bool = True # --print-memory-usage
 
 	libraries: LibrariesOptions
@@ -518,14 +539,14 @@ class BuildConfiguration:
 	# excluded_files: set[FILENAME/GLOB SELECTOR]
 	# output_type: dict[FILENAME, OUTPUT_TYPE]
 
-	assempler_args: list[str]
+	assembler_args: list[str]
 	linker_args: list[str]
 	preprocessor_args: list[str]
 
 	# simple boolean properties
 	FLAG_PROPERTIES = \
 		'print_includes', 'catch_typos', \
-		'exit_on_errors', 'dynamicly_linkable', \
+		'exit_on_errors', 'dynamically_linkable', \
 		'print_stats'
 	
 	# copy on write properties
@@ -533,13 +554,13 @@ class BuildConfiguration:
 
 	# properties that can by copied by calling 'x.copy()'
 	COPYCALL_PROPERTIES = \
-		'predefines', 'include_dirs', 'assempler_args', 'linker_args', 'preprocessor_args', \
+		'predefines', 'include_dirs', 'assembler_args', 'linker_args', 'preprocessor_args', \
 		'optimization', 'warnings', 'libraries'
 
 	def __init__(self) -> None:
 		self.predefines = dict()
 		self.optimization = Optimization()
-		self.standard = CppStandard.C17
+		self.standard = SourceStandardVersion.C17
 		self.warnings = WarningsOptions(WarningLevel.NormalWarnings, False)
 
 		self.simd_type = SIMDType.SSE
@@ -547,18 +568,18 @@ class BuildConfiguration:
 		self.print_includes = False
 		self.catch_typos = True
 		self.exit_on_errors = True
-		self.dynamicly_linkable = True
+		self.dynamically_linkable = True
 		self.print_stats = True
 
 		self.include_dirs = list()
 		self.libraries = LibrariesOptions(list(), list())
 		self.striping = SymbolStrippingType.DontStrip
 
-		self.assempler_args = list()
+		self.assembler_args = list()
 		self.linker_args = list()
 		self.preprocessor_args = list()
 
-	def create_commandline(self, mid_section: str):
+	def create_commandline(self, source_type: SourceType, mid_section: str):
 		cl = []
 		for i, v in self.predefines.items():
 			if v is not None:
@@ -567,7 +588,7 @@ class BuildConfiguration:
 				cl.append(f"-D{i}")
 		
 		cl.append(self.optimization.commandlet)
-		cl.append(f"-std={CppStandard.name(self.standard)}")
+		cl.append(f"-std={SourceStandardVersion.name_for_source_type(self.standard, source_type)}")
 		cl.append(self.warnings.commandlet)
 
 		if self.print_includes:
@@ -576,7 +597,7 @@ class BuildConfiguration:
 		# 	cl.append('-gant')
 		if self.exit_on_errors:
 			cl.append('-Wfatal-errors')
-		if not self.dynamicly_linkable:
+		if not self.dynamically_linkable:
 			cl.append('--no-dynamic-linker')
 		# if self.print_stats:
 		# 	cl.append('--print-memory-usage')
@@ -660,19 +681,19 @@ class BuildConfiguration:
 		# standard
 
 		c.standard = data.get("standard", c.standard)
-		if not isinstance(c.standard, int | CppStandard):
+		if not isinstance(c.standard, int | SourceStandardVersion):
 			if isinstance(c.standard, str):
 				name = c.standard
-				c.standard = CppStandard.parse(name.lower())
+				c.standard = SourceStandardVersion.parse(name.lower())
 
-				if c.standard == CppStandard.C77:
+				if c.standard == SourceStandardVersion.Invalid:
 					log_err(f"no standard version exists with the value: \"{name}\"")
-					c.standard = CppStandard.C17
+					c.standard = SourceStandardVersion.C17
 					log(f"default standard version to C17", fg=LogFGColors.Green)
 			else:
 				raise ValueError(f"invalid standard version value: \"{c.standard}\"")	
 
-		c.standard = CppStandard(c.standard)
+		c.standard = SourceStandardVersion(c.standard)
 
 		# warnings
 
@@ -697,7 +718,7 @@ class BuildConfiguration:
 
 		# flags
 		for i in ( "print_includes", "catch_typos",
-							"exit_on_errors", "dynamicly_linkable",
+							"exit_on_errors", "dynamically_linkable",
 							"print_stats" ):
 			attr = c.__getattribute__(i)
 			attr_type = type(attr)
@@ -747,11 +768,11 @@ class BuildConfiguration:
 
 		# commands
 
-		c.assempler_args = data.get("assempler_args", c.assempler_args)
-		if not isinstance(c.assempler_args, list | tuple):
-			raise ValueError(f"invalid assempler arguments value: \"{c.assempler_args}\"")	
+		c.assembler_args = data.get("assempler_args", c.assembler_args)
+		if not isinstance(c.assembler_args, list | tuple):
+			raise ValueError(f"invalid assempler arguments value: \"{c.assembler_args}\"")	
 
-		c.assempler_args = list(c.assempler_args)
+		c.assembler_args = list(c.assembler_args)
 
 		c.linker_args = data.get("linker_args", c.linker_args)
 		if not isinstance(c.linker_args, list | tuple):
@@ -775,13 +796,13 @@ class BuildConfiguration:
 		data["optimization_lvl"] = OptimizationLevel(self.optimization.opt_level).setting_name
 		data["optimization_type"] = OptimizationType(self.optimization.opt_type).setting_name
 
-		data["standard"] = CppStandard.name(self.standard)
+		data["standard"] = SourceStandardVersion.name(self.standard)
 
 		data["warning_level"] = WarningLevel(self.warnings.level).setting_name
 		data["warning_pedantic"] = self.warnings.pedantic
 
 		for i in ("print_includes", "catch_typos",
-							"exit_on_errors", "dynamicly_linkable",
+							"exit_on_errors", "dynamically_linkable",
 							"print_stats"):
 			data[i] = self.__getattribute__(i)
 		
@@ -791,12 +812,11 @@ class BuildConfiguration:
 		data["lib_dirs"] = self.libraries.directories.copy()
 		data["lib_names"] = self.libraries.names.copy()
 
-		data["assempler_args"] = self.assempler_args.copy()
+		data["assembler_args"] = self.assembler_args.copy()
 		data["linker_args"] = self.linker_args.copy()
 		data["preprocessor_args"] = self.preprocessor_args.copy()
 		
 		return data
-
 
 @dataclass(slots=True)
 class Project:
@@ -821,6 +841,12 @@ class Project:
 			.replace('$(OutputDir)', str(self.output_dir)) \
 			.replace('$(OutputCacheDir)', str(self.output_cache_dir)) \
 			.replace('$(ProjectDir)', str(self.project_dir)) \
+
+	@staticmethod
+	def _get_source_compiler(source_type: SourceType):
+		if source_type == SourceType.CLang:
+			return Project.GCC_ARG
+		return Project.GPP_ARG
 
 	@staticmethod
 	def from_data(data: dict[str], project_dir: Path):
@@ -974,7 +1000,6 @@ class Project:
 			log(f"build config '{config_name}' doesn't exist!")
 			return []
 		
-		ls = []
 		config = self.build_configs[config_name]
 
 		if object_files == None:
@@ -987,8 +1012,12 @@ class Project:
 					source = f.read()
 					suffix = '-' + get_unique_suffix(source, Path(i), {Path(i).parent})[1]
 				
-			
-			basename = '.'.join(Path(i).resolve().name.split('.')[:-1]) + suffix
+			_basename_doted_sections = os.path.basename(i).split('.')
+			basename, extension = '.'.join(_basename_doted_sections[:-1]), _basename_doted_sections[-1]
+
+			source_type = SourceType.from_extension(extension)
+
+			basename = basename + suffix
 
 			obj_filepath = self.output_cache_dir.joinpath(basename + '.o')
 			
@@ -1005,9 +1034,9 @@ class Project:
 
 			# adding compile file arguments
 			cs = []
-			cs.append(Project.GCC_ARG)
-			cs.append(config.create_commandline(f'-c "{i}" -o "{obj_filepath}"'))
-			ls.append((' '.join(cs), i))
+			cs.append(Project._get_source_compiler(source_type))
+			cs.append(config.create_commandline(source_type, f'-c "{i}" -o "{obj_filepath}"'))
+			yield ' '.join(cs), i
 		
 		# save the compile object (compiled c/c++) names, for cleanup of checks
 		self._save_compile_objects(object_files)
@@ -1023,13 +1052,11 @@ class Project:
 
 		final = []
 
-		final.append(Project.GCC_ARG)
+		final.append(Project.GPP_ARG)
 
-		final.append(config.create_commandline(f'{obj_file_paths} -o "{output_file}"'))
+		final.append(config.create_commandline(SourceType.CPP, f'{obj_file_paths} -o "{output_file}"'))
 
-		ls.append((' '.join(final), output_file))
-
-		return ls
+		yield ' '.join(final), output_file
 
 	@staticmethod
 	@cache
@@ -1044,7 +1071,7 @@ class Project:
 		release_build.predefines = dict(NDEBUG=None,_RELEASE=None)
 
 		return Project(
-			project_path, Path(), Path(), 'output',
+			project_path, Path('output'), Path('output/cache'), 'output',
 			dict(debug=debug_build, release=release_build) )
 
 	def build(self, config: str, verbose: bool = False):
@@ -1172,8 +1199,8 @@ class Commands:
 						fg=LogFGColors.BrightRed)
 				return False
 		
-		defualt_prj: Project = Project.get_default_project(root_dir)
-		data = defualt_prj.to_data()
+		default_prj: Project = Project.get_default_project(root_dir)
+		data = default_prj.to_data()
 		sio = StringIO()
 		json.dump(data, sio, default=lambda x: str(x), indent=4)
 

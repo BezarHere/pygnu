@@ -90,7 +90,7 @@ self documented, easy to understand:
 ### NOTES
 
 1. pygnu is in early development, so you might see a bug here and there
-2. C/C++ are the most supported, others can build but it might be hassle (btw c++ is still broken)
+2. C/C++ are the most supported, others can build but it might be hassle
 
 ---
 
