@@ -1,7 +1,7 @@
 {
-    "output_dir": ".",
-    "output_cache_dir": ".",
-    "output_name": "output",
+    "output_dir": "out",
+    "output_cache_dir": "out/cache",
+    "output_name": "main",
     "source_selectors": [
         "**/*.c",
         "**/*.cpp",
@@ -13,10 +13,10 @@
             "predefines": {
                 "_DEBUG": null
             },
-            "optimization_lvl": "med4",
-            "optimization_type": "size",
-            "standard": "c17",
-            "warning_level": 2,
+            "optimization_lvl": "med",
+            "optimization_type": "debug",
+            "standard": "c++17",
+            "warning_level": "all",
             "warning_pedantic": false,
             "print_includes": false,
             "catch_typos": true,
@@ -36,10 +36,10 @@
                 "NDEBUG": null,
                 "_RELEASE": null
             },
-            "optimization_lvl": "med",
-            "optimization_type": "debug",
+            "optimization_lvl": "extreme",
+            "optimization_type": "speed",
             "standard": "c17",
-            "warning_level": 2,
+            "warning_level": "all",
             "warning_pedantic": false,
             "print_includes": false,
             "catch_typos": true,

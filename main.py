@@ -11,7 +11,7 @@ import shutil
 import string
 import sys
 from time import time_ns
-from typing import Any, Callable, Iterable, Self, SupportsIndex
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Self, Sequence, SupportsIndex
 from pathlib import Path
 import traceback
 
@@ -139,6 +139,27 @@ def get_unique_suffix(source: str, path: Path, include_dirs: set[Path]):
 	result = ''.join(_HASH_SUFFIX_TABLE[(val >> (i * 4)) & 0xf] for i in range(_HASH_SUFFIX_LEN))
 	_UNIQUE_SUFFIX_CACHE[path] = (val, result)
 	return val, result
+
+
+def get_value_checksum(value):
+	stack = [value]
+	result = 0
+	
+	while stack:
+		current = stack.pop()
+		
+		if isinstance(current, Mapping):
+			stack.extend(current.keys())
+			stack.extend(current.values())
+		elif isinstance(current, str):
+			result ^= int.from_bytes(current.encode())
+		elif isinstance(current, Iterable):
+			stack.extend(current)
+		elif isinstance(current, int):
+			result ^= current
+		else:
+			stack.append(str(current))
+	return result
 
 @dataclass(slots=True, frozen=True)
 class CommandAction:
@@ -822,7 +843,6 @@ class BuildConfiguration:
 class Project:
 	GCC_ARG = 'gcc'
 	GPP_ARG = 'g++'
-	BUILD_HASH_FILENAME = 'build.hash'
 
 	project_dir: Path
 	output_dir: Path
@@ -834,7 +854,8 @@ class Project:
 																										 "**/*.cc",
 																										 "**/*.cxx" ))
 	
-	rebuild_mode: bool = False
+	_rebuild_mode: bool = False
+
 
 	def replace_macros(self, path: str):
 		return path \
@@ -965,8 +986,14 @@ class Project:
 
 		return data
 
+	def __hash__(self):
+		return get_value_checksum(self.to_data())
+				
 	def gather_source_files(self):
 		return self.source_selector(self.project_dir)
+
+	def _get_last_cfg_hash_filepath(self):
+		return self.output_cache_dir.joinpath("build.config.hash")
 
 	def _get_cached_objects_list_filepath(self):
 		return self.output_cache_dir.joinpath("build.files")
@@ -995,6 +1022,36 @@ class Project:
 			if i.exists() and self._can_be_cached_object_path(i):
 				os.remove(i)
 
+	def _get_last_cfg_hash(self):
+		path = self._get_last_cfg_hash_filepath()
+		if not path.exists():
+			return None
+		with open(path, 'r') as f:
+			hash_val = f.read()
+		return hash_val
+
+	def _get_cfg_hash(self):
+		return hex(hash(self))[2:]
+
+	def _save_proj_config_hash(self):
+		"""saves the current config hash value to the config hash cache file"""
+		path = self._get_last_cfg_hash_filepath()
+		hash_val = self._get_cfg_hash()
+		with open(path, 'w') as f:
+			f.write(hash_val)
+
+	def _did_proj_config_change(self):
+		"""is the project config's hash the same as the last build's hash?
+		
+		use for verifying if the project config has changed"""
+		old_hash = self._get_last_cfg_hash()
+		
+		# no hash, nothing is not something 
+		if old_hash == None:
+			return True
+		
+		return old_hash != self._get_cfg_hash()
+
 	def get_build_commands(self, config_name: str, object_files: set[Path] | None = None):
 		if not config_name in self.build_configs:
 			log(f"build config '{config_name}' doesn't exist!")
@@ -1007,7 +1064,7 @@ class Project:
 
 		for i in self.gather_source_files():
 			suffix = ''
-			if not self.rebuild_mode and os.path.exists(i):
+			if not self._rebuild_mode and os.path.exists(i):
 				with open(i, 'r') as f:
 					source = f.read()
 					suffix = '-' + get_unique_suffix(source, Path(i), {Path(i).parent})[1]
@@ -1028,7 +1085,7 @@ class Project:
 			# object file already compiled, no need to recompile
 	 		# TODO: use last written time to stop rehashing cold files
 			#! FIXME: this does not check for library changes
-			if not self.rebuild_mode and obj_filepath.exists():
+			if not self._rebuild_mode and obj_filepath.exists():
 				continue
 
 
@@ -1102,14 +1159,24 @@ class Project:
 			log(f"created output cache directory at '{self.output_cache_dir}'", fg=LogFGColors.Green)
 			self.output_cache_dir.mkdir(exist_ok=True, parents=True)
 
-		# cleanup old object files before rebuilding them in get_build_commands()
+		# check for setting change
+		if self._did_proj_config_change():
+			log("Detected config change from last build; will rebuild everything", fg=LogFGColors.Blue)
+			self._rebuild_mode = True
+			self._save_proj_config_hash()
 		
+		# even if we are going to rebuild everything
+		# we still need to know what object files are cached for cleanup
 		cached_obj_files = self._get_cached_objects()
+
 		if cached_obj_files is None:
 			cached_obj_files = set()
 		else:
 			cached_obj_files = set(cached_obj_files)
 		
+		if verbose and self._rebuild_mode:
+			log(f"VERBOSE: in rebuild mode", fg=LogFGColors.BrightBlack)
+
 		used_obj_files = set()
 
 		# 'used_obj_files' is an out parameter
@@ -1128,6 +1195,7 @@ class Project:
 			else:
 				log(f"compiled '{file.relative_to(self.project_dir)}'", fg=LogFGColors.BrightBlack)
 		
+		# clearing old objects
 		log("clearing old objects", fg=LogFGColors.BrightBlack)
 		unused_object_files = cached_obj_files - used_obj_files
 		self._delete_cached_obj_files(unused_object_files)
@@ -1144,7 +1212,7 @@ def find(it: Iterable, value) -> SupportsIndex:
 
 
 def commands_table():
-	def wraper(cls: type):
+	def wrapper(cls: type):
 
 		command_funcs = {}
 
@@ -1166,8 +1234,7 @@ def commands_table():
 		cls.func_mapped_commands = command_funcs
 
 		return cls
-	return wraper
-
+	return wrapper
 
 @commands_table()
 class Commands:
@@ -1224,7 +1291,7 @@ class Commands:
 
 		verbose: bool = argv.extract('-v') != None
 		rebuild: bool = argv.extract_any('-r', '--rebuild') != None
-		
+		force_resave: bool = argv.extract('--resave') != None
 
 		root_dir = \
 			argv.next().content if argv.can_read and not argv.peek.content.startswith('-') else os.getcwd()
@@ -1260,12 +1327,15 @@ class Commands:
 		project, project_needs_resaving = Project.from_data(data, root_dir)
 		drop_log_indent()
 
-		project.rebuild_mode = rebuild
+		project._rebuild_mode = rebuild
 
 		log("done deserializing pygnu project", fg=LogFGColors.BrightBlack)
 
-		if project_needs_resaving:
-			log("resaving project to apply fixes", fg=LogFGColors.Yellow)
+		if project_needs_resaving or force_resave:
+			if project_needs_resaving:
+				log("resaving project to apply fixes", fg=LogFGColors.Yellow)
+			else:
+				log("resaving project due to a passed argument", fg=LogFGColors.Yellow)
 			shutil.copy(proj_file, str(proj_file) + ".last")
 
 			io = StringIO()

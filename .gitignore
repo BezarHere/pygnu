@@ -12,3 +12,4 @@ build/**
 **/*.exe
 
 compile.bat
+/.vscode/
